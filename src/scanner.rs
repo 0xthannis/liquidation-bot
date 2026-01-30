@@ -326,7 +326,7 @@ impl PositionScanner {
         );
         Ok(Vec::new())
     }
-}
+
     /// Vérifie la connexion RPC
     pub fn check_connection(&self) -> Result<()> {
         self.rpc_client.get_health()
