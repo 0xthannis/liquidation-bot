@@ -12,6 +12,7 @@ use rust_decimal::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use borsh::BorshDeserialize;
+use std::mem;
 use kamino_lend::state::Obligation;
 
 use crate::config::{BotConfig, Protocol, ProgramIds};
@@ -257,7 +258,7 @@ impl PositionScanner {
 
         let config = RpcProgramAccountsConfig {
             filters: Some(vec![
-                solana_client::rpc_filter::RpcFilterType::DataSize(Obligation::LEN as u64),
+                solana_client::rpc_filter::RpcFilterType::DataSize(std::mem::size_of::<Obligation>() as u64),
             ]),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
@@ -277,7 +278,7 @@ impl PositionScanner {
         let mut opportunities = Vec::new();
 
         for (pubkey, account) in accounts.iter().take(100) {
-            if let Ok(obligation) = Obligation::try_from_slice(&account.data) {
+            if let Ok(obligation) = borsh::from_slice::<Obligation>(&account.data) {
                 // Calcul LTV via méthode
                 let current_ltv = obligation.loan_to_value().to_percent().unwrap_or(0) as f64 / 100.0;
                 // Threshold : utiliser unhealthy_borrow_value_sf / deposited_value_sf ou méthode si disponible
@@ -304,7 +305,7 @@ impl PositionScanner {
                         liab_bank: obligation.borrows.iter().find(|b| b.borrowed_amount() > 0).map(|b| b.borrow_reserve).unwrap_or(Pubkey::default()),
                         asset_mint: Pubkey::default(),
                         liab_mint: Pubkey::default(),
-                        health_factor: Decimal::from_f64((1.0 - current_ltv).max(0.0)).unwrap_or(Decimal::ZERO),
+                        health_factor: Decimal::from_f64((1.0f64 - current_ltv).max(0.0)).unwrap_or(Decimal::ZERO),
                         asset_amount: obligation.deposited_value_sf as u64,
                         liab_amount: total_debt,
                         max_liquidatable,

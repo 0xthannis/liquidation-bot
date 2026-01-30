@@ -124,42 +124,19 @@ impl Liquidator {
     async fn simulate(&self, opp: &LiquidationOpportunity) -> Result<LiquidationResult> {
         log::info!("🔒 MODE DRY-RUN: Simulation");
 
-        // Vérifier qu'on peut obtenir une quote Jupiter
-        let quote_result = self.jupiter_client.get_quote(
-            &ProgramIds::usdc_mint(),
-            &ProgramIds::sol_mint(),
-            1_000_000, // 1 USDC
-            (self.config.max_slippage_percent as u16) * 100,
-        ).await;
-
-        match quote_result {
-            Ok(quote) => {
-                log::info!("✅ Jupiter quote OK: {} -> {}", 
-                    quote.in_amount,
-                    quote.out_amount);
-                
-                Ok(LiquidationResult {
-                    success: true,
-                    signature: None,
-                    profit_lamports: opp.estimated_profit_lamports,
-                    error: None,
-                })
-            }
-            Err(e) => {
-                log::warn!("⚠️ Jupiter quote échoué: {}", e);
-                Ok(LiquidationResult {
-                    success: false,
-                    signature: None,
-                    profit_lamports: 0,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+        Ok(LiquidationResult {
+            success: true,
+            signature: None,
+            profit_lamports: opp.estimated_profit_lamports,
+            error: None,
+        })
     }
 
     /// Exécution réelle
     async fn execute_real(&self, opp: &LiquidationOpportunity) -> Result<LiquidationResult> {
         log::info!("🚀 MODE PRODUCTION");
+
+        let balance_before = self.rpc_client.get_balance(&self.keypair.pubkey())?;
 
         // Liquidation réelle pour Kamino
         if opp.protocol == "Kamino" {
@@ -211,7 +188,7 @@ impl Liquidator {
 
                 let message = solana_sdk::message::Message::new(&instructions, Some(&self.wallet_pubkey()));
                 let mut tx = solana_sdk::transaction::Transaction::new_unsigned(message);
-                tx.sign(&[&*self.keypair], recent_blockhash);
+                tx.sign(&[&self.keypair], recent_blockhash);
 
                 let signature = self.rpc_client.send_and_confirm_transaction(&tx)
                     .map_err(|e| anyhow!("Erreur envoi tx: {}", e))?;
@@ -270,7 +247,7 @@ impl Liquidator {
 
                 let message = solana_sdk::message::Message::new(&instructions, Some(&self.wallet_pubkey()));
                 let mut tx = solana_sdk::transaction::Transaction::new_unsigned(message);
-                tx.sign(&[&*self.keypair], recent_blockhash);
+                tx.sign(&[&self.keypair], recent_blockhash);
 
                 let signature = self.rpc_client.send_and_confirm_transaction(&tx)
                     .map_err(|e| anyhow!("Erreur envoi tx: {}", e))?;
@@ -303,59 +280,11 @@ impl Liquidator {
             &ProgramIds::sol_mint(),
             &ProgramIds::usdc_mint(),
             10_000_000, // 0.01 SOL
-            (self.config.max_slippage_percent as u16) * 100,
-        ).await?;
-
-        log::info!("Quote reçue: {} SOL -> {} USDC", 
-            quote.in_amount,
-            quote.out_amount);
-
-        // Obtenir la transaction de swap
-        let swap_response = self.jupiter_client.get_swap_transaction(
-            &quote,
-            &self.keypair.pubkey(),
-        ).await?;
-
-        log::info!("Transaction de swap obtenue ({} bytes)", swap_response.swap_transaction.len());
-
-        // Décoder et signer la transaction
-        let tx_bytes = BASE64_STANDARD.decode(&swap_response.swap_transaction)
-            .map_err(|e| anyhow!("Erreur décodage tx: {}", e))?;
-
-        let mut versioned_tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow!("Erreur désérialisation tx: {}", e))?;
-
-        // Signer
-        versioned_tx.signatures[0] = self.keypair.sign_message(&versioned_tx.message.serialize());
-
-        // Simuler d'abord
-        let sim_result = self.rpc_client.simulate_transaction(&versioned_tx)?;
-        if let Some(err) = sim_result.value.err {
-            log::error!("Simulation échouée: {:?}", err);
-            return Ok(LiquidationResult {
-                success: false,
-                signature: None,
-                profit_lamports: 0,
-                error: Some(format!("{:?}", err)),
-            });
-        }
-
-        log::info!("✅ Simulation réussie, envoi...");
-
-        // Envoyer
-        let signature = self.rpc_client.send_and_confirm_transaction(&versioned_tx)?;
-        log::info!("✅ Transaction confirmée: {}", signature);
-
-        // Calculer le profit réel
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        let balance_after = self.rpc_client.get_balance(&self.keypair.pubkey())?;
-        let profit = balance_after as i64 - balance_before as i64;
-
-        log::info!("Solde après: {} lamports", balance_after);
-        log::info!("Profit réel: {} lamports", profit);
-
         Ok(LiquidationResult {
-            success: true,
+            success: false,
+            signature: None,
+            profit_lamports: 0,
+            error: Some("Unsupported protocol".to_string()),
             signature: Some(signature),
             profit_lamports: profit,
             error: None,
