@@ -345,4 +345,3 @@ impl PositionScanner {
         self.rpc_client.get_latest_blockhash()
             .map_err(|e| anyhow!("Erreur blockhash: {}", e))
     }
-}
