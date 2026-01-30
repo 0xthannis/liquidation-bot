@@ -12,6 +12,7 @@ use solana_sdk::{
 };
 use solana_client::rpc_client::RpcClient;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::str::FromStr;
 
 /// Instructions de liquidation Kamino
 mod kamino_instructions {
@@ -69,7 +70,6 @@ pub struct LiquidationResult {
 /// Liquidator principal
 pub struct Liquidator {
     rpc_client: RpcClient,
-    jupiter_client: JupiterClient,
     config: BotConfig,
     keypair: Keypair,
 }
@@ -84,12 +84,8 @@ impl Liquidator {
             CommitmentConfig::confirmed(),
         );
 
-        // Client Jupiter HTTP
-        let jupiter_client = JupiterClient::new();
-
         Ok(Self {
             rpc_client,
-            jupiter_client,
             config,
             keypair,
         })

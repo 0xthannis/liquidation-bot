@@ -13,7 +13,6 @@ mod config;
 mod scanner;
 mod liquidator;
 mod utils;
-mod jupiter;
 
 use config::BotConfig;
 use scanner::PositionScanner;
