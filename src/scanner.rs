@@ -276,7 +276,7 @@ impl PositionScanner {
 
         let mut opportunities = Vec::new();
 
-        for (pubkey, account) in accounts.iter().take(5) {
+        for (pubkey, account) in accounts.iter().take(100) {
             if let Ok(obligation) = Obligation::try_from_slice(&account.data) {
                 // Calcul LTV via méthode
                 let current_ltv = obligation.loan_to_value().to_percent().unwrap_or(0) as f64 / 100.0;
