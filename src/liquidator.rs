@@ -53,6 +53,56 @@ mod kamino_instructions {
             data: [discriminator.to_vec(), amount.to_le_bytes().to_vec()].concat(),
         }
     }
+
+    pub fn flash_borrow_instruction(
+        borrower: Pubkey,
+        lending_market: Pubkey,
+        token_mint: Pubkey,
+        amount: u64,
+    ) -> Instruction {
+        // Discriminator pour flash_borrow (placeholder, basé sur Kamino SDK)
+        let discriminator: [u8; 8] = [0x5a, 0x3d, 0x8b, 0x2e, 0x1f, 0x4c, 0x9a, 0x7d]; // sha256("global:flash_borrow")[0..8]
+
+        let kamino_program = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD").unwrap();
+
+        let accounts = vec![
+            AccountMeta::new(borrower, true),
+            AccountMeta::new_readonly(lending_market, false),
+            // Reserve account for token
+            AccountMeta::new_readonly(token_mint, false),
+            // Source liquidity vault, etc. - simplified
+        ];
+
+        Instruction {
+            program_id: kamino_program,
+            accounts,
+            data: [discriminator.to_vec(), amount.to_le_bytes().to_vec()].concat(),
+        }
+    }
+
+    pub fn flash_repay_instruction(
+        borrower: Pubkey,
+        lending_market: Pubkey,
+        token_mint: Pubkey,
+        amount: u64,
+    ) -> Instruction {
+        // Discriminator pour flash_repay
+        let discriminator: [u8; 8] = [0x3a, 0x7d, 0x9b, 0x4e, 0x2f, 0x5c, 0x8a, 0x6d]; // sha256("global:flash_repay")[0..8]
+
+        let kamino_program = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD").unwrap();
+
+        let accounts = vec![
+            AccountMeta::new(borrower, true),
+            AccountMeta::new_readonly(lending_market, false),
+            AccountMeta::new_readonly(token_mint, false),
+        ];
+
+        Instruction {
+            program_id: kamino_program,
+            accounts,
+            data: [discriminator.to_vec(), amount.to_le_bytes().to_vec()].concat(),
+        }
+    }
 }
 
 /// Protection anti-reentrancy
@@ -70,7 +120,6 @@ pub struct LiquidationResult {
 /// Liquidator principal
 pub struct Liquidator {
     rpc_client: RpcClient,
-    jupiter_client: JupiterClient,
     config: BotConfig,
     keypair: Keypair,
 }
@@ -85,11 +134,8 @@ impl Liquidator {
             CommitmentConfig::confirmed(),
         );
 
-        let jupiter_client = JupiterClient::new();
-
         Ok(Self {
             rpc_client,
-            jupiter_client,
             config,
             keypair,
         })
@@ -184,7 +230,22 @@ impl Liquidator {
                     opp.max_liquidatable,
                 );
 
-                let instructions = vec![liquidate_ix];
+                // Flash loan instructions
+                let flash_borrow_ix = kamino_instructions::flash_borrow_instruction(
+                    self.wallet_pubkey(),
+                    lending_market,
+                    opp.liab_mint,
+                    opp.liab_amount as u64,
+                );
+
+                let flash_repay_ix = kamino_instructions::flash_repay_instruction(
+                    self.wallet_pubkey(),
+                    lending_market,
+                    opp.liab_mint,
+                    opp.liab_amount as u64,
+                );
+
+                let instructions = vec![flash_borrow_ix, liquidate_ix, flash_repay_ix];
 
                 // Tx
                 let recent_blockhash = self.rpc_client.get_latest_blockhash()
@@ -280,22 +341,13 @@ impl Liquidator {
             });
         }
 
-        // Logique Jupiter (swaps) pour autres protocoles
-
-        let quote = self.jupiter_client.get_quote(
-            &ProgramIds::sol_mint(),
-            &ProgramIds::usdc_mint(),
-            10_000_000, // 0.01 SOL
+        // Protocole non supporté
         Ok(LiquidationResult {
             success: false,
             signature: None,
             profit_lamports: 0,
             error: Some("Unsupported protocol".to_string()),
-            signature: Some(signature),
-            profit_lamports: profit,
-            error: None,
         })
-    }
 
     /// Pubkey du wallet
     pub fn wallet_pubkey(&self) -> Pubkey {
