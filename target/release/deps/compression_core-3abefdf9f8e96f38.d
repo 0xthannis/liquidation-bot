@@ -1,0 +1,10 @@
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\compression_core-3abefdf9f8e96f38.d: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\level.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\unshared.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\util.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libcompression_core-3abefdf9f8e96f38.rlib: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\level.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\unshared.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\util.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libcompression_core-3abefdf9f8e96f38.rmeta: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\level.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\unshared.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\util.rs
+
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\lib.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\level.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\unshared.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\util.rs:

@@ -1,0 +1,11 @@
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\debug\deps\borsh-6af7c1b7dbd0dac8.d: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\hint.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema_helpers.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\helpers.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\debug\deps\libborsh-6af7c1b7dbd0dac8.rmeta: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\hint.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema_helpers.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\helpers.rs
+
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\lib.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\mod.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\de\hint.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\schema_helpers.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\mod.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\borsh-0.10.4\src\ser\helpers.rs:

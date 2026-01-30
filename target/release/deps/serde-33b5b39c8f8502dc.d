@@ -1,0 +1,14 @@
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\serde-33b5b39c8f8502dc.d: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\build\serde-10e89a889f6b5e72\out/private.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libserde-33b5b39c8f8502dc.rlib: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\build\serde-10e89a889f6b5e72\out/private.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libserde-33b5b39c8f8502dc.rmeta: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\build\serde-10e89a889f6b5e72\out/private.rs
+
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\build\serde-10e89a889f6b5e72\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\adtha\\Documents\\Ares\\CascadeProjects\\windsurf-project\\target\\release\\build\\serde-10e89a889f6b5e72\\out

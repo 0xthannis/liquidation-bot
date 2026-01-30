@@ -1,0 +1,11 @@
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\ascii-53e0f11b643ec9c5.d: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_char.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_str.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_string.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\free_functions.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libascii-53e0f11b643ec9c5.rlib: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_char.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_str.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_string.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\free_functions.rs
+
+C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libascii-53e0f11b643ec9c5.rmeta: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\lib.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_char.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_str.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_string.rs C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\free_functions.rs
+
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\lib.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_char.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_str.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\ascii_string.rs:
+C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ascii-0.9.3\src\free_functions.rs:
