@@ -70,6 +70,7 @@ pub struct LiquidationResult {
 /// Liquidator principal
 pub struct Liquidator {
     rpc_client: RpcClient,
+    jupiter_client: JupiterClient,
     config: BotConfig,
     keypair: Keypair,
 }
@@ -84,8 +85,11 @@ impl Liquidator {
             CommitmentConfig::confirmed(),
         );
 
+        let jupiter_client = JupiterClient::new();
+
         Ok(Self {
             rpc_client,
+            jupiter_client,
             config,
             keypair,
         })
@@ -227,6 +231,8 @@ impl Liquidator {
                     &marginfi_program,
                 ).0;
 
+                let liquidatee_marginfi_account = Pubkey::from_str(&opp.account_address).unwrap();
+
                 // Instruction liquidation
                 let liquidate_ix = marginfi_instructions::build_liquidate_instruction(
                     marginfi_program,
@@ -235,7 +241,7 @@ impl Liquidator {
                     opp.liab_bank,
                     liquidator_marginfi_account,
                     self.wallet_pubkey(),
-                    opp.account_address, // liquidatee_marginfi_account
+                    liquidatee_marginfi_account,
                     opp.max_liquidatable,
                 );
 
