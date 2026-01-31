@@ -14,6 +14,7 @@ mod scanner;
 mod liquidator;
 mod utils;
 mod arbitrage;
+mod jupiter;
 
 use config::BotConfig;
 use scanner::PositionScanner;

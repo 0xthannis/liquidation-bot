@@ -70,8 +70,8 @@ impl JupiterClient {
             wrap_and_unwrap_sol: true,
             dynamic_compute_unit_limit: true,
             priority_level_with_max_lamports: PriorityLevel {
-                priority_level: "high".to_string(),
-                max_lamports: 1000000,
+                priority_level: "low".to_string(),
+                max_lamports: 5000, // Minimum fees (~0.000005 SOL)
             },
         };
 

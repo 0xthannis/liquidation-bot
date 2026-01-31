@@ -1,4 +1,4 @@
-//! Arbitrage Cross-DEX avec Flash Loans Kamino
+//! Arbitrage Cross-DEX avec Flash Loans Kamino + Jupiter API
 //! Détecte et exécute des opportunités d'arbitrage entre DEXs Solana
 
 use anyhow::{Result, anyhow};
@@ -8,12 +8,15 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     signer::Signer,
     instruction::Instruction,
+    transaction::VersionedTransaction,
 };
 use solana_client::rpc_client::RpcClient;
 use std::str::FromStr;
 use std::collections::HashMap;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 
 use crate::config::BotConfig;
+use crate::jupiter::JupiterClient;
 
 /// DEXs supportés
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -325,9 +328,10 @@ impl ArbitrageScanner {
     }
 }
 
-/// Exécuteur d'arbitrage
+/// Exécuteur d'arbitrage avec Jupiter API
 pub struct ArbitrageExecutor {
     rpc_client: RpcClient,
+    jupiter_client: JupiterClient,
     keypair: Keypair,
     config: BotConfig,
 }
@@ -340,20 +344,23 @@ impl ArbitrageExecutor {
             std::time::Duration::from_millis(config.rpc_timeout_ms),
             CommitmentConfig::confirmed(),
         );
+        let jupiter_client = JupiterClient::new();
 
         Ok(Self {
             rpc_client,
+            jupiter_client,
             keypair,
             config,
         })
     }
 
-    /// Exécute un arbitrage avec flash loan Kamino
+    /// Exécute un arbitrage via Jupiter API (meilleur routing automatique)
     pub async fn execute(&self, opp: &ArbitrageOpportunity) -> Result<ArbitrageResult> {
-        log::info!("Executing arbitrage: {} -> profit: {} ({:.2}%)", 
+        log::info!("Executing arbitrage via Jupiter: {} -> profit: {} ({:.2}%)", 
             opp.amount_in, opp.expected_profit, opp.profit_percent);
 
         if self.config.dry_run {
+            log::info!("DRY RUN: Would execute arbitrage for {} lamports profit", opp.expected_profit);
             return Ok(ArbitrageResult {
                 success: true,
                 signature: None,
@@ -362,40 +369,12 @@ impl ArbitrageExecutor {
             });
         }
 
-        // Build flash loan arbitrage transaction
-        let instructions = self.build_arbitrage_instructions(opp)?;
-
-        let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
-        let message = solana_sdk::message::Message::new(&instructions, Some(&self.keypair.pubkey()));
-        let mut tx = solana_sdk::transaction::Transaction::new_unsigned(message);
-        tx.sign(&[&self.keypair], recent_blockhash);
-
-        // Simulate first
-        match self.rpc_client.simulate_transaction(&tx) {
-            Ok(sim) => {
-                if let Some(err) = sim.value.err {
-                    return Ok(ArbitrageResult {
-                        success: false,
-                        signature: None,
-                        profit: 0,
-                        error: Some(format!("Simulation failed: {:?}", err)),
-                    });
-                }
-            }
-            Err(e) => {
-                return Ok(ArbitrageResult {
-                    success: false,
-                    signature: None,
-                    profit: 0,
-                    error: Some(format!("Simulation error: {}", e)),
-                });
-            }
-        }
-
-        // Execute
-        match self.rpc_client.send_and_confirm_transaction(&tx) {
+        // Use Jupiter for the swap (it handles routing automatically)
+        let result = self.execute_jupiter_swap(opp).await;
+        
+        match result {
             Ok(sig) => {
-                log::info!("Arbitrage executed: {}", sig);
+                log::info!("Arbitrage executed via Jupiter: {}", sig);
                 Ok(ArbitrageResult {
                     success: true,
                     signature: Some(sig),
@@ -404,49 +383,70 @@ impl ArbitrageExecutor {
                 })
             }
             Err(e) => {
+                log::warn!("Arbitrage failed: {}", e);
                 Ok(ArbitrageResult {
                     success: false,
                     signature: None,
                     profit: 0,
-                    error: Some(format!("Transaction failed: {}", e)),
+                    error: Some(e.to_string()),
                 })
             }
         }
     }
 
-    /// Build arbitrage instructions avec flash loan
-    fn build_arbitrage_instructions(&self, opp: &ArbitrageOpportunity) -> Result<Vec<Instruction>> {
-        let mut instructions = Vec::new();
+    /// Execute swap via Jupiter API
+    async fn execute_jupiter_swap(&self, opp: &ArbitrageOpportunity) -> Result<Signature> {
+        // Get quote from Jupiter
+        let quote = self.jupiter_client.get_quote(
+            &opp.token_in,
+            &opp.token_out,
+            opp.amount_in,
+            50, // 0.5% slippage (minimum)
+        ).await?;
 
-        // Kamino flash loan parameters
-        let kamino_program = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD")?;
-        let lending_market = Pubkey::from_str("7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF")?;
+        log::info!("Jupiter quote: {} -> {} (impact: {}%)", 
+            quote.in_amount, quote.out_amount, quote.price_impact_pct);
 
-        // 1. Flash borrow
-        // TODO: Add actual flash borrow instruction
+        // Get swap transaction
+        let swap_response = self.jupiter_client.get_swap_transaction(
+            &quote,
+            &self.keypair.pubkey(),
+        ).await?;
 
-        // 2. Swap on first DEX
-        for (dex, pool) in &opp.path {
-            match dex {
-                Dex::Raydium => {
-                    // Add Raydium swap instruction
-                    // TODO: Implement Raydium swap
+        // Decode and sign transaction
+        let tx_bytes = BASE64_STANDARD.decode(&swap_response.swap_transaction)
+            .map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
+
+        let mut tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow!("Failed to deserialize transaction: {}", e))?;
+
+        // Sign the transaction
+        let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
+        tx.message.set_recent_blockhash(recent_blockhash);
+        
+        let signed_tx = VersionedTransaction::try_new(
+            tx.message,
+            &[&self.keypair],
+        ).map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
+
+        // Simulate first
+        match self.rpc_client.simulate_transaction(&signed_tx) {
+            Ok(sim) => {
+                if let Some(err) = sim.value.err {
+                    return Err(anyhow!("Simulation failed: {:?}", err));
                 }
-                Dex::Orca => {
-                    // Add Orca swap instruction
-                    // TODO: Implement Orca swap
-                }
-                Dex::Jupiter => {
-                    // Use Jupiter API for routing
-                    // TODO: Implement Jupiter swap
-                }
+                log::debug!("Simulation successful");
+            }
+            Err(e) => {
+                return Err(anyhow!("Simulation error: {}", e));
             }
         }
 
-        // 3. Flash repay
-        // TODO: Add actual flash repay instruction
+        // Send transaction with minimal priority fee
+        let signature = self.rpc_client.send_and_confirm_transaction(&signed_tx)
+            .map_err(|e| anyhow!("Transaction failed: {}", e))?;
 
-        Ok(instructions)
+        Ok(signature)
     }
 }
 
