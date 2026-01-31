@@ -1,5 +1,5 @@
 /**
- * Flash Loan Arbitrage Bot - WITH KAMINO FLASH LOANS
+ * Flash Loan Arbitrage Bot - Using Official Kamino SDK
  * Atomic: Flash Borrow -> Swap A->B -> Swap B->A -> Flash Repay -> Keep Profit
  */
 
@@ -13,8 +13,7 @@ import {
   AddressLookupTableAccount,
   ComputeBudgetProgram,
   SystemProgram,
-  LAMPORTS_PER_SOL,
-  SYSVAR_INSTRUCTIONS_PUBKEY
+  LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { 
   getAssociatedTokenAddress,
@@ -22,6 +21,7 @@ import {
   createAssociatedTokenAccountInstruction,
   getAccount
 } from '@solana/spl-token';
+import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } from '@kamino-finance/klend-sdk';
 import bs58 from 'bs58';
 import 'dotenv/config';
 
@@ -30,120 +30,23 @@ const RPC_URL = process.env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.c
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
 
 // Kamino Main Market
-const KAMINO_MARKET = new PublicKey('7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
-const KAMINO_PROGRAM = new PublicKey('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD');
-
-// Known Kamino reserves (Main Market)
-const KAMINO_RESERVES = {
-  SOL: new PublicKey('d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q'),
-  USDC: new PublicKey('D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59'),
-  USDT: new PublicKey('H3t6qZ1JkguCNTi9uzVKqQ7dvt2cum4XiXWom6Gn5e5S'),
-  JitoSOL: new PublicKey('EVbyPKrHG6WBfm4dLxLMJpUDY43cCAcHSpV3KYjKsktW'),
-};
+const KAMINO_MARKET_ADDRESS = '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF';
 
 // Token mints
-const TOKENS = {
-  SOL: new PublicKey('So11111111111111111111111111111111111111112'),
-  USDC: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
-  USDT: new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'),
-  JitoSOL: new PublicKey('J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn'),
+const TOKENS: Record<string, string> = {
+  SOL: 'So11111111111111111111111111111111111111112',
+  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+  JitoSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
 };
 
 // Jupiter API
 const JUPITER_API = 'https://quote-api.jup.ag/v6';
 
-// Jito tip
+// Jito tip account
 const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
 
-// ============== KAMINO FLASH LOAN INSTRUCTIONS ==============
-const FLASH_BORROW_DISCRIMINATOR = Buffer.from([0x87, 0xe7, 0x34, 0xa7, 0x07, 0x34, 0xd4, 0xc1]);
-const FLASH_REPAY_DISCRIMINATOR = Buffer.from([0xb9, 0x75, 0x00, 0xcb, 0x60, 0xf5, 0xb4, 0xba]);
-
-function deriveLendingMarketAuthority(): PublicKey {
-  const [authority] = PublicKey.findProgramAddressSync(
-    [Buffer.from('lma'), KAMINO_MARKET.toBuffer()],
-    KAMINO_PROGRAM
-  );
-  return authority;
-}
-
-function deriveReserveLiquiditySupply(reserve: PublicKey): PublicKey {
-  const [supply] = PublicKey.findProgramAddressSync(
-    [Buffer.from('liquidity'), reserve.toBuffer()],
-    KAMINO_PROGRAM
-  );
-  return supply;
-}
-
-function deriveReserveFeeReceiver(reserve: PublicKey): PublicKey {
-  const [feeReceiver] = PublicKey.findProgramAddressSync(
-    [Buffer.from('fee_receiver'), reserve.toBuffer()],
-    KAMINO_PROGRAM
-  );
-  return feeReceiver;
-}
-
-function buildFlashBorrowIx(
-  reserve: PublicKey,
-  reserveMint: PublicKey,
-  userAta: PublicKey,
-  amount: bigint
-): TransactionInstruction {
-  const lendingMarketAuthority = deriveLendingMarketAuthority();
-  const reserveLiquiditySupply = deriveReserveLiquiditySupply(reserve);
-  
-  const data = Buffer.alloc(16);
-  FLASH_BORROW_DISCRIMINATOR.copy(data, 0);
-  data.writeBigUInt64LE(amount, 8);
-  
-  return new TransactionInstruction({
-    programId: KAMINO_PROGRAM,
-    keys: [
-      { pubkey: KAMINO_MARKET, isSigner: false, isWritable: false },
-      { pubkey: lendingMarketAuthority, isSigner: false, isWritable: false },
-      { pubkey: reserve, isSigner: false, isWritable: true },
-      { pubkey: reserveMint, isSigner: false, isWritable: false },
-      { pubkey: reserveLiquiditySupply, isSigner: false, isWritable: true },
-      { pubkey: userAta, isSigner: false, isWritable: true },
-      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data,
-  });
-}
-
-function buildFlashRepayIx(
-  reserve: PublicKey,
-  userAta: PublicKey,
-  userAuthority: PublicKey,
-  amount: bigint,
-  borrowIxIndex: number
-): TransactionInstruction {
-  const reserveLiquiditySupply = deriveReserveLiquiditySupply(reserve);
-  const reserveFeeReceiver = deriveReserveFeeReceiver(reserve);
-  
-  const data = Buffer.alloc(17);
-  FLASH_REPAY_DISCRIMINATOR.copy(data, 0);
-  data.writeBigUInt64LE(amount, 8);
-  data.writeUInt8(borrowIxIndex, 16);
-  
-  return new TransactionInstruction({
-    programId: KAMINO_PROGRAM,
-    keys: [
-      { pubkey: userAta, isSigner: false, isWritable: true },
-      { pubkey: reserveLiquiditySupply, isSigner: false, isWritable: true },
-      { pubkey: reserveFeeReceiver, isSigner: false, isWritable: true },
-      { pubkey: reserve, isSigner: false, isWritable: true },
-      { pubkey: KAMINO_MARKET, isSigner: false, isWritable: false },
-      { pubkey: userAuthority, isSigner: true, isWritable: false },
-      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data,
-  });
-}
-
-// ============== JUPITER HELPERS ==============
+// ============== TYPES ==============
 interface JupiterQuote {
   inputMint: string;
   inAmount: string;
@@ -165,16 +68,25 @@ interface SwapInstructions {
   error?: string;
 }
 
+// ============== HELPERS ==============
+function loadKeypair(): Keypair {
+  if (!PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in .env');
+  return Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+}
+
 async function getJupiterQuote(
-  inputMint: PublicKey,
-  outputMint: PublicKey,
+  inputMint: string,
+  outputMint: string,
   amount: number,
   slippageBps: number = 100
 ): Promise<JupiterQuote | null> {
   try {
     const url = `${JUPITER_API}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`;
     const response = await fetch(url);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.log(`   Quote error: ${response.status}`);
+      return null;
+    }
     return await response.json();
   } catch (e) {
     return null;
@@ -196,9 +108,16 @@ async function getJupiterSwapInstructions(
         dynamicComputeUnitLimit: true,
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const text = await response.text();
+      console.log(`   Swap instructions error: ${text.slice(0, 100)}`);
+      return null;
+    }
     const data = await response.json();
-    if (data.error) return null;
+    if (data.error) {
+      console.log(`   Swap error: ${data.error}`);
+      return null;
+    }
     return data;
   } catch (e) {
     return null;
@@ -231,12 +150,6 @@ async function getAddressLookupTableAccounts(
   return accounts;
 }
 
-// ============== HELPERS ==============
-function loadKeypair(): Keypair {
-  if (!PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set');
-  return Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
-}
-
 async function ensureAta(
   connection: Connection,
   keypair: Keypair,
@@ -257,49 +170,78 @@ async function ensureAta(
   }
 }
 
-// ============== FLASH LOAN ARBITRAGE ==============
+// ============== FLASH LOAN ARBITRAGE WITH KAMINO SDK ==============
 async function executeFlashLoanArbitrage(
   connection: Connection,
   keypair: Keypair,
-  flashLoanToken: 'USDC' | 'SOL',
-  swapToken: PublicKey,
+  market: KaminoMarket,
+  flashTokenSymbol: string,
+  swapTokenSymbol: string,
   flashLoanAmount: bigint
 ): Promise<string | null> {
-  console.log(`\n🚀 Flash Loan Arbitrage: ${flashLoanToken}`);
-  console.log(`   Amount: ${Number(flashLoanAmount) / (flashLoanToken === 'SOL' ? LAMPORTS_PER_SOL : 1_000_000)}`);
+  const flashMint = TOKENS[flashTokenSymbol];
+  const swapMint = TOKENS[swapTokenSymbol];
   
-  const flashMint = TOKENS[flashLoanToken];
-  const flashReserve = KAMINO_RESERVES[flashLoanToken];
+  if (!flashMint || !swapMint) {
+    console.log(`   ❌ Unknown token: ${flashTokenSymbol} or ${swapTokenSymbol}`);
+    return null;
+  }
   
-  // 1. Get Jupiter quotes for round-trip
-  const quoteForward = await getJupiterQuote(flashMint, swapToken, Number(flashLoanAmount), 100);
+  const decimals = flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL' ? 9 : 6;
+  const displayAmount = Number(flashLoanAmount) / Math.pow(10, decimals);
+  
+  console.log(`\n⚡ Flash Arb: ${displayAmount} ${flashTokenSymbol} <-> ${swapTokenSymbol}`);
+  
+  // 1. Get reserve from Kamino market
+  const reserve = market.getReserveByMint(new PublicKey(flashMint));
+  if (!reserve) {
+    console.log(`   ❌ No Kamino reserve for ${flashTokenSymbol}`);
+    return null;
+  }
+  
+  // 2. Get Jupiter quotes for round-trip
+  const quoteForward = await getJupiterQuote(flashMint, swapMint, Number(flashLoanAmount), 100);
   if (!quoteForward) {
-    console.log('   ❌ No quote for forward swap');
+    console.log('   ❌ No quote forward');
     return null;
   }
   
   const amountMid = parseInt(quoteForward.outAmount);
-  const quoteReturn = await getJupiterQuote(swapToken, flashMint, amountMid, 100);
+  if (amountMid === 0) {
+    console.log('   ❌ Zero mid amount');
+    return null;
+  }
+  
+  const quoteReturn = await getJupiterQuote(swapMint, flashMint, amountMid, 100);
   if (!quoteReturn) {
-    console.log('   ❌ No quote for return swap');
+    console.log('   ❌ No quote return');
     return null;
   }
   
   const amountOut = BigInt(quoteReturn.outAmount);
-  const flashLoanFee = flashLoanAmount * 9n / 10000n; // 0.09%
-  const repayAmount = flashLoanAmount + flashLoanFee;
+  const flashLoanFee = flashLoanAmount * 9n / 10000n; // 0.09% Kamino fee
+  const totalRepay = flashLoanAmount + flashLoanFee;
   
-  if (amountOut <= repayAmount) {
-    const loss = Number(repayAmount - amountOut);
-    console.log(`   ❌ Not profitable: would lose ${loss}`);
+  // Check profitability
+  if (amountOut <= totalRepay + 20000n) { // Need some buffer for gas
+    const diff = Number(totalRepay - amountOut);
+    console.log(`   ❌ Not profitable: -${diff / Math.pow(10, decimals)} ${flashTokenSymbol}`);
     return null;
   }
   
-  const profit = Number(amountOut - repayAmount);
+  const profit = Number(amountOut - totalRepay);
+  const profitDisplay = profit / Math.pow(10, decimals);
   const profitPercent = (profit / Number(flashLoanAmount)) * 100;
-  console.log(`   💰 Expected profit: ${profit} (${profitPercent.toFixed(4)}%)`);
   
-  // 2. Get swap instructions
+  console.log(`   💰 Profit: ${profitDisplay.toFixed(6)} ${flashTokenSymbol} (${profitPercent.toFixed(4)}%)`);
+  
+  // Only execute if profit > 0.01%
+  if (profitPercent < 0.01) {
+    console.log('   ⏭️ Profit too small, skipping');
+    return null;
+  }
+  
+  // 3. Get swap instructions from Jupiter
   const swapIx1 = await getJupiterSwapInstructions(quoteForward, keypair.publicKey);
   const swapIx2 = await getJupiterSwapInstructions(quoteReturn, keypair.publicKey);
   
@@ -308,39 +250,60 @@ async function executeFlashLoanArbitrage(
     return null;
   }
   
-  // 3. Get lookup tables
+  // 4. Get user's ATA for the flash loan token
+  const userAta = await getAssociatedTokenAddress(new PublicKey(flashMint), keypair.publicKey);
+  
+  // 5. Build flash loan instructions using Kamino SDK
+  const lendingMarketAuthority = await market.getLendingMarketAuthority();
+  
+  const { flashBorrowIx, flashRepayIx } = getFlashLoanInstructions({
+    borrowIxIndex: 0, // Will be adjusted below
+    userTransferAuthority: keypair.publicKey,
+    lendingMarketAuthority,
+    lendingMarketAddress: market.getAddress(),
+    reserve,
+    amountLamports: flashLoanAmount,
+    destinationAta: userAta,
+    referrerAccount: undefined,
+    referrerTokenState: undefined,
+    programId: PROGRAM_ID,
+  });
+  
+  // 6. Collect all lookup tables
   const altAddresses = [...new Set([
     ...swapIx1.addressLookupTableAddresses,
     ...swapIx2.addressLookupTableAddresses,
   ])];
   const lookupTables = await getAddressLookupTableAccounts(connection, altAddresses);
   
-  // 4. Ensure ATAs exist
-  const { ata: flashAta, createIx: createFlashAtaIx } = await ensureAta(connection, keypair, flashMint);
-  
-  // 5. Build instruction list
+  // 7. Build instruction list
   const instructions: TransactionInstruction[] = [];
   
-  // Compute budget
-  instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }));
-  instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10000 }));
+  // Compute budget (high limit for flash loan + 2 swaps)
+  instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
+  instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })); // Higher priority
   
-  // Jito tip
+  // Jito tip for faster inclusion
   instructions.push(SystemProgram.transfer({
     fromPubkey: keypair.publicKey,
     toPubkey: JITO_TIP_ACCOUNT,
-    lamports: 5000,
+    lamports: 10000, // 0.00001 SOL
   }));
   
   // Create ATA if needed
-  if (createFlashAtaIx) instructions.push(createFlashAtaIx);
+  const { createIx: createAtaIx } = await ensureAta(connection, keypair, new PublicKey(flashMint));
+  if (createAtaIx) {
+    instructions.push(createAtaIx);
+  }
   
-  // FLASH BORROW (index will be after compute + tip + ata creation)
+  // Record flash borrow index (after compute budget + tip + maybe ATA)
   const flashBorrowIndex = instructions.length;
-  instructions.push(buildFlashBorrowIx(flashReserve, flashMint, flashAta, flashLoanAmount));
   
-  // Swap 1: Flash token -> Swap token
-  for (const ix of swapIx1.setupInstructions) {
+  // FLASH BORROW
+  instructions.push(flashBorrowIx);
+  
+  // SWAP 1: flashToken -> swapToken
+  for (const ix of swapIx1.setupInstructions || []) {
     instructions.push(deserializeInstruction(ix));
   }
   instructions.push(deserializeInstruction(swapIx1.swapInstruction));
@@ -348,8 +311,8 @@ async function executeFlashLoanArbitrage(
     instructions.push(deserializeInstruction(swapIx1.cleanupInstruction));
   }
   
-  // Swap 2: Swap token -> Flash token
-  for (const ix of swapIx2.setupInstructions) {
+  // SWAP 2: swapToken -> flashToken
+  for (const ix of swapIx2.setupInstructions || []) {
     instructions.push(deserializeInstruction(ix));
   }
   instructions.push(deserializeInstruction(swapIx2.swapInstruction));
@@ -357,17 +320,24 @@ async function executeFlashLoanArbitrage(
     instructions.push(deserializeInstruction(swapIx2.cleanupInstruction));
   }
   
-  // FLASH REPAY
-  instructions.push(buildFlashRepayIx(
-    flashReserve,
-    flashAta,
-    keypair.publicKey,
-    repayAmount,
-    flashBorrowIndex
-  ));
+  // FLASH REPAY - need to rebuild with correct borrow index
+  const { flashRepayIx: flashRepayIxCorrected } = getFlashLoanInstructions({
+    borrowIxIndex: flashBorrowIndex,
+    userTransferAuthority: keypair.publicKey,
+    lendingMarketAuthority,
+    lendingMarketAddress: market.getAddress(),
+    reserve,
+    amountLamports: totalRepay, // Include fee
+    destinationAta: userAta,
+    referrerAccount: undefined,
+    referrerTokenState: undefined,
+    programId: PROGRAM_ID,
+  });
+  instructions.push(flashRepayIxCorrected);
   
-  // 6. Build transaction
+  // 8. Build versioned transaction
   const blockhash = await connection.getLatestBlockhash('finalized');
+  
   const messageV0 = new TransactionMessage({
     payerKey: keypair.publicKey,
     recentBlockhash: blockhash.blockhash,
@@ -377,100 +347,153 @@ async function executeFlashLoanArbitrage(
   const transaction = new VersionedTransaction(messageV0);
   transaction.sign([keypair]);
   
-  // 7. Simulate
-  console.log('   Simulating...');
-  const simulation = await connection.simulateTransaction(transaction);
+  // 9. Simulate first
+  console.log('   🔄 Simulating...');
+  const simulation = await connection.simulateTransaction(transaction, {
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+  });
+  
   if (simulation.value.err) {
     console.log('   ❌ Simulation failed:', JSON.stringify(simulation.value.err));
     if (simulation.value.logs) {
-      const errorLogs = simulation.value.logs.filter(l => l.includes('Error') || l.includes('failed'));
-      errorLogs.forEach(l => console.log('      ', l));
+      const errorLogs = simulation.value.logs.filter((l: string) => 
+        l.toLowerCase().includes('error') || 
+        l.toLowerCase().includes('failed') ||
+        l.includes('Program log:')
+      ).slice(-5);
+      errorLogs.forEach((l: string) => console.log('      ', l));
     }
     return null;
   }
-  console.log('   ✅ Simulation OK');
   
-  // 8. Send
-  console.log('   Sending transaction...');
-  const signature = await connection.sendTransaction(transaction, {
-    maxRetries: 3,
-    skipPreflight: true,
-  });
-  console.log(`   📤 Sent: ${signature}`);
+  console.log('   ✅ Simulation OK! Sending...');
   
-  // 9. Confirm
-  const confirmation = await connection.confirmTransaction({
-    signature,
-    blockhash: blockhash.blockhash,
-    lastValidBlockHeight: blockhash.lastValidBlockHeight,
-  }, 'confirmed');
-  
-  if (confirmation.value.err) {
-    console.log('   ❌ Failed:', confirmation.value.err);
+  // 10. Send transaction
+  try {
+    const signature = await connection.sendTransaction(transaction, {
+      maxRetries: 3,
+      skipPreflight: true,
+    });
+    console.log(`   📤 Sent: ${signature}`);
+    
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: blockhash.blockhash,
+      lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    }, 'confirmed');
+    
+    if (confirmation.value.err) {
+      console.log('   ❌ Tx failed:', confirmation.value.err);
+      return null;
+    }
+    
+    console.log(`   ✅ SUCCESS! Sig: ${signature}`);
+    console.log(`   💵 Profit: ~${profitDisplay.toFixed(6)} ${flashTokenSymbol}`);
+    return signature;
+    
+  } catch (e: any) {
+    console.log('   ❌ Send error:', e.message?.slice(0, 100));
     return null;
   }
-  
-  console.log(`   ✅ SUCCESS! Profit: ~${profit}`);
-  return signature;
 }
 
 // ============== MAIN ==============
 async function main() {
   console.log('╔═══════════════════════════════════════════════════════════╗');
-  console.log('║   ⚡ FLASH LOAN ARBITRAGE BOT - KAMINO + JUPITER          ║');
+  console.log('║   ⚡ KAMINO FLASH LOAN ARBITRAGE BOT                      ║');
+  console.log('║   Using Official Kamino SDK + Jupiter API                 ║');
   console.log('╚═══════════════════════════════════════════════════════════╝\n');
   
+  // Load wallet
   const keypair = loadKeypair();
   console.log(`Wallet: ${keypair.publicKey.toBase58()}`);
   
-  const connection = new Connection(RPC_URL, 'confirmed');
+  // Connect
+  const connection = new Connection(RPC_URL, {
+    commitment: 'confirmed',
+    confirmTransactionInitialTimeout: 60000,
+  });
+  
   const balance = await connection.getBalance(keypair.publicKey);
-  console.log(`Balance: ${balance / LAMPORTS_PER_SOL} SOL\n`);
+  console.log(`Balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
   
-  // Flash loan amounts to try (USDC has 6 decimals)
-  const usdcAmounts = [
-    100_000_000n,      // 100 USDC
-    1_000_000_000n,    // 1,000 USDC
-    10_000_000_000n,   // 10,000 USDC
-    100_000_000_000n,  // 100,000 USDC
+  if (balance < 0.01 * LAMPORTS_PER_SOL) {
+    console.error('❌ Need at least 0.01 SOL for fees');
+    return;
+  }
+  
+  // Load Kamino market
+  console.log('\nLoading Kamino market...');
+  const market = await KaminoMarket.load(connection, new PublicKey(KAMINO_MARKET_ADDRESS));
+  if (!market) {
+    console.error('❌ Failed to load Kamino market');
+    return;
+  }
+  console.log('✅ Kamino market loaded');
+  
+  // Load reserves
+  await market.loadReserves();
+  console.log(`✅ ${market.reserves.size} reserves loaded\n`);
+  
+  // Arbitrage configurations
+  const arbConfigs = [
+    // USDC flash loans
+    { flash: 'USDC', swap: 'SOL', amounts: [100n, 1000n, 10000n, 100000n] }, // USDC amounts
+    { flash: 'USDC', swap: 'USDT', amounts: [1000n, 10000n, 100000n] },
+    { flash: 'USDC', swap: 'JitoSOL', amounts: [100n, 1000n, 10000n] },
+    // SOL flash loans
+    { flash: 'SOL', swap: 'USDC', amounts: [1n, 10n, 100n] }, // SOL amounts
+    { flash: 'SOL', swap: 'JitoSOL', amounts: [1n, 10n, 100n] },
   ];
   
-  // Tokens to arb against
-  const arbTokens = [
-    TOKENS.SOL,
-    TOKENS.USDT,
-    TOKENS.JitoSOL,
-  ];
+  console.log('🔍 Starting arbitrage scanner...\n');
+  console.log('Pairs: USDC<->SOL, USDC<->USDT, USDC<->JitoSOL, SOL<->USDC, SOL<->JitoSOL');
+  console.log('Amounts: 100 to 100,000 USDC | 1 to 100 SOL\n');
   
-  console.log('🔍 Scanning for flash loan arbitrage opportunities...\n');
+  let scanCount = 0;
   
+  // Main loop
   while (true) {
-    for (const amount of usdcAmounts) {
-      for (const token of arbTokens) {
+    scanCount++;
+    
+    for (const config of arbConfigs) {
+      for (const baseAmount of config.amounts) {
+        // Convert to base units
+        const decimals = config.flash === 'SOL' || config.flash === 'JitoSOL' ? 9 : 6;
+        const amount = baseAmount * BigInt(Math.pow(10, decimals));
+        
         try {
-          const result = await executeFlashLoanArbitrage(
+          await executeFlashLoanArbitrage(
             connection,
             keypair,
-            'USDC',
-            token,
+            market,
+            config.flash,
+            config.swap,
             amount
           );
-          
-          if (result) {
-            console.log(`\n🎉 ARBITRAGE EXECUTED! Signature: ${result}\n`);
-          }
         } catch (e: any) {
-          // Silently continue on errors
+          // Silently continue
         }
         
-        // Small delay
-        await new Promise(r => setTimeout(r, 200));
+        // Small delay between checks
+        await new Promise(r => setTimeout(r, 100));
       }
     }
     
-    process.stdout.write('.');
-    await new Promise(r => setTimeout(r, 3000));
+    // Progress indicator
+    if (scanCount % 10 === 0) {
+      const newBalance = await connection.getBalance(keypair.publicKey);
+      console.log(`\n[Scan #${scanCount}] Balance: ${(newBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
+    } else {
+      process.stdout.write('.');
+    }
+    
+    // Delay between full scans
+    await new Promise(r => setTimeout(r, 2000));
   }
 }
 
+// Run
 main().catch(console.error);
