@@ -453,9 +453,15 @@ impl PositionScanner {
         for (pubkey, account) in accounts.iter().take(self.config.batch_size) {
             if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
                 if obligation.is_liquidatable() {
-                    let current_ltv = obligation.loan_to_value();
+                    let _current_ltv = obligation.loan_to_value();
                     let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
                     let max_liquidatable = total_debt / 2;
+                    
+                    // Skip unrealistic values (parsing errors) - max 1000 SOL
+                    if max_liquidatable > 1_000_000_000_000 || max_liquidatable == 0 {
+                        continue;
+                    }
+                    
                     let bonus_bps = 500u16;
 
                     let estimated_profit = math::estimate_profit(
@@ -586,6 +592,12 @@ async fn scan_kamino_parallel(
                 // Net: divide by 10^9
                 let total_debt_lamports = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
                 let max_liquidatable = total_debt_lamports / 2;
+                
+                // Skip unrealistic values (parsing errors) - max 1000 SOL = 1 trillion lamports
+                if max_liquidatable > 1_000_000_000_000 || max_liquidatable == 0 {
+                    continue;
+                }
+                
                 let bonus_bps = 500u16;
 
                 let estimated_profit = math::estimate_profit(
