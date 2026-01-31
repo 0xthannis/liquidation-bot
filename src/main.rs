@@ -132,42 +132,42 @@ async fn start_bot(force_dry_run: bool) -> Result<()> {
             st.record_scan(opportunities.len() as u64);
         }
 
-        if opportunities.is_empty() {
-            log::info!("🔍 Aucune opportunité");
-            continue;
-        }
+        // Process liquidation opportunities
+        if !opportunities.is_empty() {
+            log::info!("🎯 {} opportunités de liquidation", opportunities.len());
 
-        log::info!("🎯 {} opportunités", opportunities.len());
+            for (i, opp) in opportunities.iter().enumerate() {
+                log::info!("━━━ {}/{}: {} - Profit: {} lamports", 
+                    i + 1, opportunities.len(), opp.protocol, opp.estimated_profit_lamports);
 
-        for (i, opp) in opportunities.iter().enumerate() {
-            log::info!("━━━ {}/{}: {} - Profit: {} lamports", 
-                i + 1, opportunities.len(), opp.protocol, opp.estimated_profit_lamports);
+                match liquidator.execute(opp).await {
+                    Ok(result) => {
+                        let mut st = stats.lock().await;
+                        st.record_liquidation(result.success, result.profit_lamports);
 
-            match liquidator.execute(opp).await {
-                Ok(result) => {
-                    let mut st = stats.lock().await;
-                    st.record_liquidation(result.success, result.profit_lamports);
-
-                    if result.success {
-                        log::info!("✅ Réussi! Profit: {}", result.profit_lamports);
-                        if let Some(sig) = result.signature {
-                            log::info!("   Sig: {}", sig);
+                        if result.success {
+                            log::info!("✅ Réussi! Profit: {}", result.profit_lamports);
+                            if let Some(sig) = result.signature {
+                                log::info!("   Sig: {}", sig);
+                            }
+                        } else if let Some(err) = result.error {
+                            log::warn!("⚠️ Échoué: {}", err);
                         }
-                    } else if let Some(err) = result.error {
-                        log::warn!("⚠️ Échoué: {}", err);
+                    }
+                    Err(e) => {
+                        log::error!("❌ Erreur: {}", e);
+                        let mut st = stats.lock().await;
+                        st.record_liquidation(false, 0);
                     }
                 }
-                Err(e) => {
-                    log::error!("❌ Erreur: {}", e);
-                    let mut st = stats.lock().await;
-                    st.record_liquidation(false, 0);
-                }
-            }
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        } else {
+            log::info!("🔍 Aucune opportunité de liquidation");
         }
 
-        // Scan arbitrage opportunities
+        // Scan arbitrage opportunities (ALWAYS scan, not only when liquidations exist)
         {
             let mut arb = arb_scanner.lock().await;
             match arb.scan().await {
@@ -187,9 +187,11 @@ async fn start_bot(force_dry_run: bool) -> Result<()> {
                                 Err(e) => log::warn!("Arbitrage error: {}", e),
                             }
                         }
+                    } else {
+                        log::info!("💱 Aucune opportunité d'arbitrage");
                     }
                 }
-                Err(e) => log::debug!("Arbitrage scan error: {}", e),
+                Err(e) => log::warn!("⚠️ Arbitrage scan error: {}", e),
             }
         }
 

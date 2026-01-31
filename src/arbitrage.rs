@@ -1,5 +1,5 @@
 //! Arbitrage Cross-DEX avec Flash Loans Kamino + Jupiter API
-//! Détecte et exécute des opportunités d'arbitrage entre DEXs Solana
+//! Utilise Jupiter API pour détecter les opportunités d'arbitrage en temps réel
 
 use anyhow::{Result, anyhow};
 use solana_sdk::{
@@ -12,86 +12,12 @@ use solana_sdk::{
 };
 use solana_client::rpc_client::RpcClient;
 use std::str::FromStr;
-use std::collections::HashMap;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 
 use crate::config::BotConfig;
 use crate::jupiter::JupiterClient;
 
-/// DEXs supportés
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
-pub enum Dex {
-    Raydium,
-    Orca,
-    Jupiter,
-}
-
-impl std::fmt::Display for Dex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Dex::Raydium => write!(f, "Raydium"),
-            Dex::Orca => write!(f, "Orca"),
-            Dex::Jupiter => write!(f, "Jupiter"),
-        }
-    }
-}
-
-/// Pool de liquidité
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct LiquidityPool {
-    pub dex: Dex,
-    pub address: Pubkey,
-    pub token_a: Pubkey,
-    pub token_b: Pubkey,
-    pub reserve_a: u64,
-    pub reserve_b: u64,
-    pub fee_bps: u16,
-}
-
-impl LiquidityPool {
-    /// Calcule le prix token_a en termes de token_b
-    #[allow(dead_code)]
-    pub fn price_a_to_b(&self) -> f64 {
-        if self.reserve_a == 0 {
-            return 0.0;
-        }
-        self.reserve_b as f64 / self.reserve_a as f64
-    }
-
-    /// Calcule le prix token_b en termes de token_a
-    #[allow(dead_code)]
-    pub fn price_b_to_a(&self) -> f64 {
-        if self.reserve_b == 0 {
-            return 0.0;
-        }
-        self.reserve_a as f64 / self.reserve_b as f64
-    }
-
-    /// Calcule l'output pour un swap (avec AMM constant product)
-    pub fn get_amount_out(&self, amount_in: u64, is_a_to_b: bool) -> u64 {
-        let (reserve_in, reserve_out) = if is_a_to_b {
-            (self.reserve_a, self.reserve_b)
-        } else {
-            (self.reserve_b, self.reserve_a)
-        };
-
-        if reserve_in == 0 || reserve_out == 0 {
-            return 0;
-        }
-
-        // AMM formula: amount_out = (amount_in * reserve_out) / (reserve_in + amount_in)
-        // Avec frais: amount_in_with_fee = amount_in * (10000 - fee_bps) / 10000
-        let amount_in_with_fee = (amount_in as u128) * (10000 - self.fee_bps as u128) / 10000;
-        let numerator = amount_in_with_fee * (reserve_out as u128);
-        let denominator = (reserve_in as u128) + amount_in_with_fee;
-
-        (numerator / denominator) as u64
-    }
-}
-
-/// Opportunité d'arbitrage
+/// Opportunité d'arbitrage détectée via Jupiter
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ArbitrageOpportunity {
@@ -100,75 +26,93 @@ pub struct ArbitrageOpportunity {
     pub amount_in: u64,
     pub expected_profit: u64,
     pub profit_percent: f64,
-    pub path: Vec<(Dex, Pubkey)>, // (DEX, pool address)
+    pub path: Vec<(String, Pubkey)>, // (DEX label, pool address)
     pub flash_loan_fee: u64,
 }
 
-/// Scanner d'arbitrage
-#[allow(dead_code)]
+/// Scanner d'arbitrage utilisant Jupiter API
 pub struct ArbitrageScanner {
-    rpc_client: RpcClient,
     config: BotConfig,
-    pools: HashMap<(Pubkey, Pubkey), Vec<LiquidityPool>>, // (token_a, token_b) -> pools
+    jupiter_client: JupiterClient,
 }
 
 impl ArbitrageScanner {
     pub fn new(config: BotConfig) -> Result<Self> {
-        let rpc_client = RpcClient::new_with_timeout_and_commitment(
-            config.get_rpc_url().to_string(),
-            std::time::Duration::from_millis(config.rpc_timeout_ms),
-            CommitmentConfig::confirmed(),
-        );
+        let jupiter_client = JupiterClient::new();
 
         Ok(Self {
-            rpc_client,
             config,
-            pools: HashMap::new(),
+            jupiter_client,
         })
     }
 
-    /// Scan pour opportunités d'arbitrage
+    /// Scan pour opportunités d'arbitrage via Jupiter API (temps réel)
     pub async fn scan(&mut self) -> Result<Vec<ArbitrageOpportunity>> {
-        log::info!("Scanning for arbitrage opportunities...");
-
-        // Rafraîchir les pools
-        self.refresh_pools().await?;
+        log::info!("🔍 Scanning arbitrage via Jupiter API...");
 
         let mut opportunities = Vec::new();
 
-        // Tokens principaux à scanner
+        // Tokens principaux
         let usdc = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")?;
         let sol = Pubkey::from_str("So11111111111111111111111111111111111111112")?;
         let usdt = Pubkey::from_str("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB")?;
+        let bonk = Pubkey::from_str("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")?;
+        let jito = Pubkey::from_str("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn")?;
 
-        // Montants d'emprunt flash loan pour l'arbitrage (MAX PROFITS)
-        let test_amounts = vec![
-            50_000_000_000u64,    // 50,000 USDC
-            100_000_000_000u64,   // 100,000 USDC
-            250_000_000_000u64,   // 250,000 USDC
-            500_000_000_000u64,   // 500,000 USDC
-            1_000_000_000_000u64, // 1,000,000 USDC (1M)
+        // Montants à tester (en lamports/base units)
+        let test_amounts_sol = vec![
+            1_000_000_000u64,     // 1 SOL
+            10_000_000_000u64,    // 10 SOL
+            100_000_000_000u64,   // 100 SOL
+        ];
+        
+        let test_amounts_usdc = vec![
+            100_000_000u64,       // 100 USDC (6 decimals)
+            1_000_000_000u64,     // 1,000 USDC
+            10_000_000_000u64,    // 10,000 USDC
         ];
 
-        // Scanner les paires principales
-        for &amount in &test_amounts {
-            // USDC -> SOL -> USDC (triangle)
-            if let Some(opp) = self.find_triangle_arb(usdc, sol, usdc, amount).await {
-                if opp.profit_percent > 0.1 { // > 0.1% profit
+        // Scan SOL -> Token -> SOL (round-trip arbitrage)
+        for &amount in &test_amounts_sol {
+            // SOL -> USDC -> SOL
+            if let Some(opp) = self.check_roundtrip_arb(sol, usdc, amount).await {
+                if opp.profit_percent > 0.05 {
+                    log::info!("  💰 Found SOL->USDC->SOL arb: {:.3}% profit", opp.profit_percent);
                     opportunities.push(opp);
                 }
             }
-
-            // USDC -> SOL via différents DEXs (direct arb)
-            if let Some(opp) = self.find_cross_dex_arb(usdc, sol, amount).await {
+            
+            // SOL -> jitoSOL -> SOL (LST arb)
+            if let Some(opp) = self.check_roundtrip_arb(sol, jito, amount).await {
+                if opp.profit_percent > 0.02 {
+                    log::info!("  💰 Found SOL->jitoSOL->SOL arb: {:.3}% profit", opp.profit_percent);
+                    opportunities.push(opp);
+                }
+            }
+            
+            // SOL -> BONK -> SOL (meme coin volatility)
+            if let Some(opp) = self.check_roundtrip_arb(sol, bonk, amount).await {
                 if opp.profit_percent > 0.1 {
+                    log::info!("  💰 Found SOL->BONK->SOL arb: {:.3}% profit", opp.profit_percent);
                     opportunities.push(opp);
                 }
             }
+        }
 
-            // USDT -> USDC arbitrage (stablecoin depeg)
-            if let Some(opp) = self.find_cross_dex_arb(usdt, usdc, amount).await {
-                if opp.profit_percent > 0.05 { // Lower threshold for stables
+        // Scan USDC -> Token -> USDC
+        for &amount in &test_amounts_usdc {
+            // USDC -> USDT -> USDC (stablecoin depeg)
+            if let Some(opp) = self.check_roundtrip_arb(usdc, usdt, amount).await {
+                if opp.profit_percent > 0.01 { // Lower threshold for stables
+                    log::info!("  💰 Found USDC->USDT->USDC arb: {:.3}% profit", opp.profit_percent);
+                    opportunities.push(opp);
+                }
+            }
+            
+            // USDC -> SOL -> USDC
+            if let Some(opp) = self.check_roundtrip_arb(usdc, sol, amount).await {
+                if opp.profit_percent > 0.05 {
+                    log::info!("  💰 Found USDC->SOL->USDC arb: {:.3}% profit", opp.profit_percent);
                     opportunities.push(opp);
                 }
             }
@@ -177,128 +121,65 @@ impl ArbitrageScanner {
         // Trier par profit
         opportunities.sort_by(|a, b| b.expected_profit.cmp(&a.expected_profit));
 
-        log::info!("Found {} arbitrage opportunities", opportunities.len());
+        log::info!("📊 Arbitrage scan complete: {} opportunities", opportunities.len());
         Ok(opportunities)
     }
 
-    /// Rafraîchit les données des pools
-    async fn refresh_pools(&mut self) -> Result<()> {
-        // Pools Raydium principaux (hardcoded pour simplifier)
-        // En production, il faudrait les fetch dynamiquement
-        
-        let usdc = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")?;
-        let sol = Pubkey::from_str("So11111111111111111111111111111111111111112")?;
-
-        // Raydium SOL/USDC pool
-        let raydium_sol_usdc = Pubkey::from_str("58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2")?;
-        
-        // Orca SOL/USDC pool (Whirlpool)
-        let orca_sol_usdc = Pubkey::from_str("HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ")?;
-
-        // Fetch reserves from on-chain (simplified - using estimates)
-        // En production réelle, il faut parser les account data des pools
-        
-        let raydium_pool = LiquidityPool {
-            dex: Dex::Raydium,
-            address: raydium_sol_usdc,
-            token_a: sol,
-            token_b: usdc,
-            reserve_a: self.fetch_pool_reserve(&raydium_sol_usdc, true).await.unwrap_or(1_000_000_000_000), // ~1000 SOL
-            reserve_b: self.fetch_pool_reserve(&raydium_sol_usdc, false).await.unwrap_or(100_000_000_000), // ~100k USDC
-            fee_bps: 25, // 0.25%
-        };
-
-        let orca_pool = LiquidityPool {
-            dex: Dex::Orca,
-            address: orca_sol_usdc,
-            token_a: sol,
-            token_b: usdc,
-            reserve_a: self.fetch_pool_reserve(&orca_sol_usdc, true).await.unwrap_or(1_000_000_000_000),
-            reserve_b: self.fetch_pool_reserve(&orca_sol_usdc, false).await.unwrap_or(100_000_000_000),
-            fee_bps: 30, // 0.30%
-        };
-
-        // Index pools by token pair
-        let key = (sol, usdc);
-        self.pools.insert(key, vec![raydium_pool, orca_pool]);
-
-        Ok(())
-    }
-
-    /// Fetch pool reserve from on-chain
-    async fn fetch_pool_reserve(&self, pool: &Pubkey, is_token_a: bool) -> Result<u64> {
-        // Simplified: In production, parse the pool account data structure
-        // For now, return a placeholder that will be replaced with real data
-        
-        match self.rpc_client.get_account(pool) {
-            Ok(account) => {
-                // Parse based on pool type
-                // Raydium AMM v4: reserves at specific offsets
-                // Orca Whirlpool: different structure
-                
-                if account.data.len() > 100 {
-                    // Simplified parsing - offset 72 for token A, 80 for token B (Raydium)
-                    let offset = if is_token_a { 72 } else { 80 };
-                    if account.data.len() > offset + 8 {
-                        let bytes: [u8; 8] = account.data[offset..offset+8].try_into().unwrap_or([0u8; 8]);
-                        return Ok(u64::from_le_bytes(bytes));
-                    }
-                }
-                Ok(0)
-            }
-            Err(_) => Ok(0),
-        }
-    }
-
-    /// Trouve arbitrage cross-DEX (même paire, DEXs différents)
-    async fn find_cross_dex_arb(
+    /// Check round-trip arbitrage: A -> B -> A via Jupiter
+    async fn check_roundtrip_arb(
         &self,
         token_a: Pubkey,
         token_b: Pubkey,
         amount: u64,
     ) -> Option<ArbitrageOpportunity> {
-        let key = (token_a, token_b);
-        let pools = self.pools.get(&key)?;
-
-        if pools.len() < 2 {
-            return None;
-        }
-
-        let mut best_profit: i64 = 0;
-        let mut best_path: Option<(usize, usize)> = None;
-
-        // Compare all pool pairs
-        for i in 0..pools.len() {
-            for j in 0..pools.len() {
-                if i == j {
-                    continue;
-                }
-
-                // Buy on pool i, sell on pool j
-                let amount_out_1 = pools[i].get_amount_out(amount, true); // A -> B
-                let amount_out_2 = pools[j].get_amount_out(amount_out_1, false); // B -> A
-
-                let profit = amount_out_2 as i64 - amount as i64;
-                if profit > best_profit {
-                    best_profit = profit;
-                    best_path = Some((i, j));
-                }
+        // Step 1: Get quote A -> B
+        let quote_ab = match self.jupiter_client.get_quote(&token_a, &token_b, amount, 50).await {
+            Ok(q) => q,
+            Err(e) => {
+                log::debug!("Quote A->B failed: {}", e);
+                return None;
             }
-        }
+        };
 
-        if best_profit <= 0 {
+        let amount_b: u64 = quote_ab.out_amount.parse().unwrap_or(0);
+        if amount_b == 0 {
             return None;
         }
 
-        let (buy_idx, sell_idx) = best_path?;
-        let flash_loan_fee = (amount as f64 * 0.0009) as u64; // 0.09% Kamino flash loan fee
+        // Step 2: Get quote B -> A (return trip)
+        let quote_ba = match self.jupiter_client.get_quote(&token_b, &token_a, amount_b, 50).await {
+            Ok(q) => q,
+            Err(e) => {
+                log::debug!("Quote B->A failed: {}", e);
+                return None;
+            }
+        };
 
-        if best_profit as u64 <= flash_loan_fee {
-            return None; // Not profitable after fees
+        let amount_returned: u64 = quote_ba.out_amount.parse().unwrap_or(0);
+        if amount_returned == 0 {
+            return None;
         }
 
-        let net_profit = best_profit as u64 - flash_loan_fee;
+        // Calculate profit
+        let flash_loan_fee = (amount as f64 * 0.0009) as u64; // 0.09% Kamino flash loan fee
+        let gas_estimate = 10_000u64; // ~0.00001 SOL
+        let total_costs = flash_loan_fee + gas_estimate;
+
+        if amount_returned <= amount + total_costs {
+            return None; // Not profitable
+        }
+
+        let gross_profit = amount_returned - amount;
+        let net_profit = gross_profit - total_costs;
         let profit_percent = (net_profit as f64 / amount as f64) * 100.0;
+
+        // Extract route info from Jupiter
+        let path: Vec<(String, Pubkey)> = quote_ab.route_plan.iter()
+            .filter_map(|r| {
+                let label = r.swap_info.label.clone().unwrap_or_else(|| "Unknown".to_string());
+                Pubkey::from_str(&r.swap_info.amm_key).ok().map(|pk| (label, pk))
+            })
+            .collect();
 
         Some(ArbitrageOpportunity {
             token_in: token_a,
@@ -306,32 +187,9 @@ impl ArbitrageScanner {
             amount_in: amount,
             expected_profit: net_profit,
             profit_percent,
-            path: vec![
-                (pools[buy_idx].dex, pools[buy_idx].address),
-                (pools[sell_idx].dex, pools[sell_idx].address),
-            ],
+            path,
             flash_loan_fee,
         })
-    }
-
-    /// Trouve arbitrage triangulaire
-    async fn find_triangle_arb(
-        &self,
-        _token_a: Pubkey,
-        _token_b: Pubkey,
-        _token_c: Pubkey,
-        _amount: u64,
-    ) -> Option<ArbitrageOpportunity> {
-        // A -> B -> C -> A
-        // Pour simplifier, on utilise Jupiter pour le routing
-        
-        // Cette fonction est un placeholder
-        // En production, il faudrait:
-        // 1. Trouver pools A/B, B/C, C/A
-        // 2. Calculer le meilleur chemin
-        // 3. Vérifier profitabilité
-
-        None // TODO: Implement full triangle arbitrage
     }
 }
 

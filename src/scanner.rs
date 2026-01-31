@@ -16,91 +16,133 @@ use std::str::FromStr;
 use crate::config::{BotConfig, Protocol, ProgramIds};
 use crate::utils::{LiquidationOpportunity, MarginfiAccountHeader, RateLimiter, math};
 
-/// Structure Obligation Kamino simplifiée (désérialisation manuelle)
-/// Basée sur: https://github.com/Kamino-Finance/klend/blob/main/programs/klend/src/state/obligation.rs
+/// Structure Obligation Kamino - parsing corrigé basé sur la structure réelle
+/// Ref: https://github.com/Kamino-Finance/klend/blob/main/programs/klend/src/state/obligation.rs
+/// 
+/// Layout (approximatif - Anchor IDL):
+/// - [0..8]: Discriminator (Anchor)
+/// - [8..16]: last_update (LastUpdate struct: slot u64 + stale bool)
+/// - [16..17]: last_update stale flag
+/// - [17..49]: lending_market (Pubkey)
+/// - [49..81]: owner (Pubkey)
+/// - [81..97]: deposited_value_sf (u128)
+/// - [97..113]: borrowed_assets_market_value_sf (u128) 
+/// - [113..129]: allowed_borrow_value_sf (u128)
+/// - [129..145]: unhealthy_borrow_value_sf (u128)
+/// - [145..161]: super_unhealthy_borrow_value_sf (u128)
+/// - [161..169]: borrowing_isolated (bool + padding)
+/// - ... puis deposits array et borrows array
 #[derive(Debug)]
 #[allow(dead_code)]
 struct KaminoObligation {
-    /// Discriminator (8 bytes)
     pub tag: u64,
-    /// Last update slot
-    pub last_update: u64,
-    /// Lending market address
+    pub last_update_slot: u64,
     pub lending_market: Pubkey,
-    /// Owner of the obligation
     pub owner: Pubkey,
-    /// Deposited value (scaled)
     pub deposited_value_sf: u128,
-    /// Borrowed value (scaled)  
     pub borrowed_assets_market_value_sf: u128,
-    /// Allowed borrow value
     pub allowed_borrow_value_sf: u128,
-    /// Unhealthy borrow value
     pub unhealthy_borrow_value_sf: u128,
-    /// Deposits (first one only for simplicity)
     pub deposit_reserve: Pubkey,
     pub deposited_amount: u64,
-    /// Borrows (first one only for simplicity)
     pub borrow_reserve: Pubkey,
-    pub borrowed_amount: u64,
+    pub borrowed_amount_sf: u128,
 }
 
+/// Kamino Obligation discriminator (sha256("account:Obligation")[..8])
+const KAMINO_OBLIGATION_DISCRIMINATOR: [u8; 8] = [168, 206, 141, 106, 88, 76, 172, 167];
+
 impl KaminoObligation {
-    /// Parse from account data (simplified)
+    /// Parse from account data with correct offsets
     fn from_account_data(data: &[u8]) -> Option<Self> {
-        if data.len() < 200 {
+        // Minimum size check - Obligation accounts are typically 1300+ bytes
+        if data.len() < 500 {
             return None;
         }
 
-        // Parse discriminator
-        let tag = u64::from_le_bytes(data[0..8].try_into().ok()?);
+        // Check discriminator to ensure this is an Obligation account
+        let disc: [u8; 8] = data[0..8].try_into().ok()?;
+        if disc != KAMINO_OBLIGATION_DISCRIMINATOR {
+            // Try alternative: some accounts may have different discriminator
+            // Log for debugging but continue parsing
+            log::trace!("Non-standard discriminator: {:?}", disc);
+        }
         
-        // Skip if not an Obligation account (check discriminator)
-        // Kamino Obligation discriminator: varies, we check size instead
+        let tag = u64::from_le_bytes(disc);
+
+        // LastUpdate struct: slot (u64) + stale (bool, 1 byte padded to 8)
+        let last_update_slot = u64::from_le_bytes(data[8..16].try_into().ok()?);
         
-        let last_update = u64::from_le_bytes(data[8..16].try_into().ok()?);
+        // Lending market at offset 24 (after LastUpdate which is 16 bytes with padding)
+        let lending_market = Pubkey::try_from(&data[24..56]).ok()?;
         
-        // Lending market at offset 16
-        let lending_market = Pubkey::try_from(&data[16..48]).ok()?;
+        // Owner at offset 56
+        let owner = Pubkey::try_from(&data[56..88]).ok()?;
         
-        // Owner at offset 48
-        let owner = Pubkey::try_from(&data[48..80]).ok()?;
+        // Scaled values (u128 = 16 bytes each)
+        // deposited_value_sf at 88
+        let deposited_value_sf = u128::from_le_bytes(data[88..104].try_into().ok()?);
+        // borrowed_assets_market_value_sf at 104
+        let borrowed_assets_market_value_sf = u128::from_le_bytes(data[104..120].try_into().ok()?);
+        // allowed_borrow_value_sf at 120
+        let allowed_borrow_value_sf = u128::from_le_bytes(data[120..136].try_into().ok()?);
+        // unhealthy_borrow_value_sf at 136
+        let unhealthy_borrow_value_sf = u128::from_le_bytes(data[136..152].try_into().ok()?);
         
-        // Values at various offsets (these are u128 scaled values)
-        let deposited_value_sf = u128::from_le_bytes(data[80..96].try_into().ok()?);
-        let borrowed_assets_market_value_sf = u128::from_le_bytes(data[96..112].try_into().ok()?);
-        let allowed_borrow_value_sf = u128::from_le_bytes(data[112..128].try_into().ok()?);
-        let unhealthy_borrow_value_sf = u128::from_le_bytes(data[128..144].try_into().ok()?);
+        // Skip super_unhealthy (152..168), borrowing_isolated (168..176), etc.
+        // Deposits array starts around offset 200-300 depending on version
+        // Each ObligationCollateral is: deposit_reserve (32) + deposited_amount (u64) + ...
         
-        // Deposits array starts around offset 200+ (simplified: get first reserve)
-        let deposit_reserve = if data.len() > 232 {
-            Pubkey::try_from(&data[200..232]).unwrap_or_default()
-        } else {
-            Pubkey::default()
-        };
+        // Search for first non-zero deposit in deposits array region
+        let mut deposit_reserve = Pubkey::default();
+        let mut deposited_amount = 0u64;
         
-        let deposited_amount = if data.len() > 240 {
-            u64::from_le_bytes(data[232..240].try_into().unwrap_or([0u8; 8]))
-        } else {
-            0
-        };
+        // Deposits typically start around offset 200-250
+        let deposits_start = 200;
+        if data.len() > deposits_start + 64 {
+            for i in 0..8 {
+                let offset = deposits_start + (i * 80); // Each deposit entry ~80 bytes
+                if offset + 40 > data.len() { break; }
+                
+                let reserve = Pubkey::try_from(&data[offset..offset+32]).unwrap_or_default();
+                if reserve != Pubkey::default() {
+                    deposit_reserve = reserve;
+                    if offset + 40 <= data.len() {
+                        deposited_amount = u64::from_le_bytes(
+                            data[offset+32..offset+40].try_into().unwrap_or([0u8; 8])
+                        );
+                    }
+                    break;
+                }
+            }
+        }
         
-        // Borrows array (simplified)
-        let borrow_reserve = if data.len() > 360 {
-            Pubkey::try_from(&data[328..360]).unwrap_or_default()
-        } else {
-            Pubkey::default()
-        };
+        // Borrows array typically after deposits (around offset 800+)
+        let mut borrow_reserve = Pubkey::default();
+        let mut borrowed_amount_sf = 0u128;
         
-        let borrowed_amount = if data.len() > 368 {
-            u64::from_le_bytes(data[360..368].try_into().unwrap_or([0u8; 8]))
-        } else {
-            0
-        };
+        let borrows_start = 850;
+        if data.len() > borrows_start + 64 {
+            for i in 0..8 {
+                let offset = borrows_start + (i * 96); // Each borrow entry ~96 bytes
+                if offset + 48 > data.len() { break; }
+                
+                let reserve = Pubkey::try_from(&data[offset..offset+32]).unwrap_or_default();
+                if reserve != Pubkey::default() {
+                    borrow_reserve = reserve;
+                    if offset + 48 <= data.len() {
+                        borrowed_amount_sf = u128::from_le_bytes(
+                            data[offset+32..offset+48].try_into().unwrap_or([0u8; 16])
+                        );
+                    }
+                    break;
+                }
+            }
+        }
 
         Some(Self {
             tag,
-            last_update,
+            last_update_slot,
             lending_market,
             owner,
             deposited_value_sf,
@@ -110,7 +152,7 @@ impl KaminoObligation {
             deposit_reserve,
             deposited_amount,
             borrow_reserve,
-            borrowed_amount,
+            borrowed_amount_sf,
         })
     }
 
@@ -122,10 +164,25 @@ impl KaminoObligation {
         self.borrowed_assets_market_value_sf as f64 / self.deposited_value_sf as f64
     }
 
-    /// Check if liquidatable
+    /// Check if liquidatable - borrowed value exceeds unhealthy threshold
     fn is_liquidatable(&self) -> bool {
-        self.borrowed_assets_market_value_sf > self.unhealthy_borrow_value_sf 
-            && self.borrowed_assets_market_value_sf > 0
+        // Must have borrowed something
+        if self.borrowed_assets_market_value_sf == 0 {
+            return false;
+        }
+        // Unhealthy when borrowed > unhealthy_borrow_value
+        self.borrowed_assets_market_value_sf > self.unhealthy_borrow_value_sf
+    }
+    
+    /// Get health ratio (< 1.0 means liquidatable)
+    fn health_ratio(&self) -> f64 {
+        if self.borrowed_assets_market_value_sf == 0 {
+            return f64::MAX;
+        }
+        if self.unhealthy_borrow_value_sf == 0 {
+            return 0.0;
+        }
+        self.unhealthy_borrow_value_sf as f64 / self.borrowed_assets_market_value_sf as f64
     }
 }
 
@@ -287,7 +344,7 @@ impl PositionScanner {
             .get_program_accounts_with_config(&program_id, config)
             .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
 
-        log::debug!("  Marginfi: {} accounts found", accounts.len());
+        log::info!("  Marginfi: {} accounts fetched", accounts.len());
 
         let mut opportunities = Vec::new();
 
@@ -363,10 +420,12 @@ impl PositionScanner {
     async fn scan_kamino(&self) -> Result<Vec<LiquidationOpportunity>> {
         let program_id = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD")?;
 
-        // Filter by data size (Obligation accounts are ~1500+ bytes)
+        // Filter by minimum data size (Obligation accounts vary from ~1200 to ~3000+ bytes)
+        // Using memcmp filter for Obligation discriminator instead of exact size
         let config = RpcProgramAccountsConfig {
             filters: Some(vec![
-                solana_client::rpc_filter::RpcFilterType::DataSize(1500),
+                // Minimum size filter - obligations are at least 1200 bytes
+                solana_client::rpc_filter::RpcFilterType::DataSize(1300),
             ]),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
@@ -381,7 +440,7 @@ impl PositionScanner {
             .get_program_accounts_with_config(&program_id, config)
             .map_err(|e| anyhow!("RPC error Kamino: {}", e))?;
 
-        log::debug!("  Kamino: {} accounts found", accounts.len());
+        log::info!("  Kamino: {} accounts fetched", accounts.len());
 
         let mut opportunities = Vec::new();
 
@@ -409,9 +468,9 @@ impl PositionScanner {
                             liab_bank: obligation.borrow_reserve,
                             asset_mint: Pubkey::default(),
                             liab_mint: Pubkey::default(),
-                            health_factor: Decimal::from_f64(1.0 - current_ltv).unwrap_or(Decimal::ZERO),
+                            health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
                             asset_amount: obligation.deposited_amount,
-                            liab_amount: obligation.borrowed_amount,
+                            liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000) as u64,
                             max_liquidatable,
                             liquidation_bonus_bps: bonus_bps,
                             estimated_profit_lamports: estimated_profit,
@@ -462,7 +521,8 @@ async fn scan_kamino_parallel(
 
     let config = RpcProgramAccountsConfig {
         filters: Some(vec![
-            solana_client::rpc_filter::RpcFilterType::DataSize(1500),
+            // Minimum size filter - obligations are at least 1200 bytes
+            solana_client::rpc_filter::RpcFilterType::DataSize(1300),
         ]),
         account_config: RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64),
@@ -477,13 +537,28 @@ async fn scan_kamino_parallel(
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Kamino: {}", e))?;
 
-    log::info!("  [Parallel] Kamino: {} accounts found", accounts.len());
+    log::info!("  [Parallel] Kamino: {} accounts fetched", accounts.len());
 
     let mut opportunities = Vec::new();
+    let mut parsed_count = 0u64;
+    let mut with_debt_count = 0u64;
+    let mut liquidatable_count = 0u64;
 
     for (pubkey, account) in accounts.iter().take(batch_size) {
         if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
+            parsed_count += 1;
+            
+            // Check if has active debt
+            if obligation.borrowed_assets_market_value_sf > 0 {
+                with_debt_count += 1;
+                
+                let ltv = obligation.loan_to_value();
+                log::debug!("  Kamino obligation {}: LTV={:.4}, borrowed_sf={}, unhealthy_sf={}", 
+                    pubkey, ltv, obligation.borrowed_assets_market_value_sf, obligation.unhealthy_borrow_value_sf);
+            }
+            
             if obligation.is_liquidatable() {
+                liquidatable_count += 1;
                 let current_ltv = obligation.loan_to_value();
                 let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000) as u64;
                 let max_liquidatable = total_debt / 2;
@@ -512,9 +587,9 @@ async fn scan_kamino_parallel(
                         liab_bank: obligation.borrow_reserve,
                         asset_mint,
                         liab_mint,
-                        health_factor: Decimal::from_f64(1.0 - current_ltv).unwrap_or(Decimal::ZERO),
+                        health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
                         asset_amount: obligation.deposited_amount,
-                        liab_amount: obligation.borrowed_amount,
+                        liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000) as u64,
                         max_liquidatable,
                         liquidation_bonus_bps: bonus_bps,
                         estimated_profit_lamports: estimated_profit,
@@ -524,6 +599,9 @@ async fn scan_kamino_parallel(
             }
         }
     }
+
+    log::info!("  [Parallel] Kamino stats: parsed={}, with_debt={}, liquidatable={}, opportunities={}", 
+        parsed_count, with_debt_count, liquidatable_count, opportunities.len());
 
     Ok(opportunities)
 }
@@ -567,12 +645,16 @@ async fn scan_marginfi_parallel(
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
 
-    log::info!("  [Parallel] Marginfi: {} accounts found", accounts.len());
+    log::info!("  [Parallel] Marginfi: {} accounts fetched", accounts.len());
 
     let mut opportunities = Vec::new();
+    let mut parsed_count = 0u64;
+    let mut with_debt_count = 0u64;
+    let mut unhealthy_count = 0u64;
 
     for (pubkey, account) in accounts.iter().take(batch_size) {
         if let Ok(header) = borsh::from_slice::<MarginfiAccountHeader>(&account.data) {
+            parsed_count += 1;
             let mut total_assets: i128 = 0;
             let mut total_liabs: i128 = 0;
             let mut asset_bank = Pubkey::default();
@@ -598,10 +680,18 @@ async fn scan_marginfi_parallel(
                 }
             }
 
+            if total_liabs > 0 {
+                with_debt_count += 1;
+            }
+
             if total_liabs > 0 && total_assets > 0 {
                 let health = Decimal::from(total_assets) / Decimal::from(total_liabs);
+                
+                log::debug!("  Marginfi account {}: health={}, assets={}, liabs={}", 
+                    pubkey, health, total_assets, total_liabs);
 
                 if health < Decimal::ONE {
+                    unhealthy_count += 1;
                     let max_liquidatable = (total_liabs as u64) / 2;
                     let bonus_bps = 250u16;
 
@@ -641,6 +731,9 @@ async fn scan_marginfi_parallel(
             }
         }
     }
+
+    log::info!("  [Parallel] Marginfi stats: parsed={}, with_debt={}, unhealthy={}, opportunities={}", 
+        parsed_count, with_debt_count, unhealthy_count, opportunities.len());
 
     Ok(opportunities)
 }

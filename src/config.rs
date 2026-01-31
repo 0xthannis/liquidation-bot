@@ -68,7 +68,7 @@ impl ProgramIds {
     
     // Marginfi V2 Program - MAINNET OFFICIEL
     pub fn marginfi() -> Pubkey {
-        Pubkey::from_str("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVFxA").unwrap()
+        Pubkey::from_str("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA").unwrap()
     }
     
     // Marginfi Group (main lending group)
