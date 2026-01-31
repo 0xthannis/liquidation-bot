@@ -454,7 +454,7 @@ impl PositionScanner {
             if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
                 if obligation.is_liquidatable() {
                     let current_ltv = obligation.loan_to_value();
-                    let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000) as u64;
+                    let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
                     let max_liquidatable = total_debt / 2;
                     let bonus_bps = 500u16;
 
@@ -476,7 +476,7 @@ impl PositionScanner {
                             liab_mint: Pubkey::default(),
                             health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
                             asset_amount: obligation.deposited_amount,
-                            liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000) as u64,
+                            liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000_000_000) as u64,
                             max_liquidatable,
                             liquidation_bonus_bps: bonus_bps,
                             estimated_profit_lamports: estimated_profit,
@@ -581,8 +581,11 @@ async fn scan_kamino_parallel(
             
             if obligation.is_liquidatable() {
                 liquidatable_count += 1;
-                let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000) as u64;
-                let max_liquidatable = total_debt / 2;
+                // Kamino uses 10^18 scale factor (WAD) for _sf values
+                // Convert to lamports: divide by 10^18, then multiply by 10^9 (lamports per SOL)
+                // Net: divide by 10^9
+                let total_debt_lamports = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
+                let max_liquidatable = total_debt_lamports / 2;
                 let bonus_bps = 500u16;
 
                 let estimated_profit = math::estimate_profit(
