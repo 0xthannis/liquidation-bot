@@ -552,29 +552,30 @@ async fn scan_kamino_parallel(
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Kamino: {}", e))?;
 
-    log::info!("  [Parallel] Kamino: {} accounts fetched", accounts.len());
+    log::info!("  [Parallel] Kamino: {} accounts fetched, processing batch of {}", accounts.len(), batch_size);
 
     let mut opportunities = Vec::new();
     let mut parsed_count = 0u64;
     let mut with_debt_count = 0u64;
     let mut liquidatable_count = 0u64;
+    let mut processed = 0u64;
 
     for (pubkey, account) in accounts.iter().take(batch_size) {
+        processed += 1;
+        if processed % 500 == 0 {
+            log::info!("  [Parallel] Kamino: processed {}/{} accounts...", processed, batch_size.min(accounts.len()));
+        }
+        
         if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
             parsed_count += 1;
             
             // Check if has active debt
             if obligation.borrowed_assets_market_value_sf > 0 {
                 with_debt_count += 1;
-                
-                let ltv = obligation.loan_to_value();
-                log::debug!("  Kamino obligation {}: LTV={:.4}, borrowed_sf={}, unhealthy_sf={}", 
-                    pubkey, ltv, obligation.borrowed_assets_market_value_sf, obligation.unhealthy_borrow_value_sf);
             }
             
             if obligation.is_liquidatable() {
                 liquidatable_count += 1;
-                let current_ltv = obligation.loan_to_value();
                 let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000) as u64;
                 let max_liquidatable = total_debt / 2;
                 let bonus_bps = 500u16;
@@ -587,21 +588,15 @@ async fn scan_kamino_parallel(
                 );
 
                 if estimated_profit > 0 {
-                    // Fetch reserve data on-chain pour obtenir les mints
-                    let (asset_mint, liab_mint) = fetch_reserve_mints(
-                        &rpc_client,
-                        &obligation.deposit_reserve,
-                        &obligation.borrow_reserve,
-                    ).unwrap_or((Pubkey::default(), Pubkey::default()));
-
+                    // Skip RPC call in hot loop - use default mints, fetch later if needed
                     opportunities.push(LiquidationOpportunity {
                         protocol: "Kamino".to_string(),
                         account_address: *pubkey,
                         owner: obligation.owner,
                         asset_bank: obligation.deposit_reserve,
                         liab_bank: obligation.borrow_reserve,
-                        asset_mint,
-                        liab_mint,
+                        asset_mint: Pubkey::default(),
+                        liab_mint: Pubkey::default(),
                         health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
                         asset_amount: obligation.deposited_amount,
                         liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000) as u64,
@@ -662,14 +657,20 @@ async fn scan_marginfi_parallel(
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
 
-    log::info!("  [Parallel] Marginfi: {} accounts fetched (group: {})", accounts.len(), group);
+    log::info!("  [Parallel] Marginfi: {} accounts fetched (group: {}), processing batch of {}", accounts.len(), group, batch_size);
 
     let mut opportunities = Vec::new();
     let mut parsed_count = 0u64;
     let mut with_debt_count = 0u64;
     let mut unhealthy_count = 0u64;
+    let mut processed = 0u64;
 
     for (pubkey, account) in accounts.iter().take(batch_size) {
+        processed += 1;
+        if processed % 500 == 0 {
+            log::info!("  [Parallel] Marginfi: processed {}/{} accounts...", processed, batch_size.min(accounts.len()));
+        }
+        
         if let Ok(header) = borsh::from_slice::<MarginfiAccountHeader>(&account.data) {
             parsed_count += 1;
             let mut total_assets: i128 = 0;
@@ -703,9 +704,6 @@ async fn scan_marginfi_parallel(
 
             if total_liabs > 0 && total_assets > 0 {
                 let health = Decimal::from(total_assets) / Decimal::from(total_liabs);
-                
-                log::debug!("  Marginfi account {}: health={}, assets={}, liabs={}", 
-                    pubkey, health, total_assets, total_liabs);
 
                 if health < Decimal::ONE {
                     unhealthy_count += 1;
@@ -720,21 +718,15 @@ async fn scan_marginfi_parallel(
                     );
 
                     if estimated_profit > 0 {
-                        // Fetch bank mints on-chain
-                        let (asset_mint, liab_mint) = fetch_marginfi_bank_mints(
-                            &rpc_client,
-                            &asset_bank,
-                            &liab_bank,
-                        ).unwrap_or((Pubkey::default(), Pubkey::default()));
-
+                        // Skip RPC call in hot loop - use default mints, fetch later if needed
                         opportunities.push(LiquidationOpportunity {
                             protocol: "Marginfi".to_string(),
                             account_address: *pubkey,
                             owner: header.authority,
                             asset_bank,
                             liab_bank,
-                            asset_mint,
-                            liab_mint,
+                            asset_mint: Pubkey::default(),
+                            liab_mint: Pubkey::default(),
                             health_factor: health,
                             asset_amount: total_assets as u64,
                             liab_amount: total_liabs as u64,
