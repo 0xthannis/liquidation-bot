@@ -675,10 +675,28 @@ async fn scan_marginfi_parallel(
     let mut unhealthy_count = 0u64;
     let mut processed = 0u64;
 
+    // MarginfiAccount discriminator (first 8 bytes)
+    let marginfi_account_disc: [u8; 8] = [67, 178, 130, 109, 126, 114, 28, 42];
+    
     for (pubkey, account) in accounts.iter().take(batch_size) {
         processed += 1;
         if processed % 500 == 0 {
             log::info!("  [Parallel] Marginfi: processed {}/{} accounts...", processed, batch_size.min(accounts.len()));
+        }
+        
+        // Skip if data too small or wrong discriminator
+        if account.data.len() < 200 {
+            continue;
+        }
+        
+        let disc: [u8; 8] = match account.data[0..8].try_into() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        
+        // Only parse MarginfiAccount type
+        if disc != marginfi_account_disc {
+            continue;
         }
         
         if let Ok(header) = borsh::from_slice::<MarginfiAccountHeader>(&account.data) {
