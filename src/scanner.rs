@@ -543,7 +543,7 @@ async fn scan_kamino_parallel(
             encoding: Some(UiAccountEncoding::Base64),
             data_slice: Some(solana_account_decoder::UiDataSliceConfig {
                 offset: 0,
-                length: 400, // Get enough data for basic parsing
+                length: 1500, // Obligation accounts need ~500+ bytes for parsing
             }),
             commitment: Some(CommitmentConfig::confirmed()),
             min_context_slot: None,
