@@ -137,7 +137,8 @@ async function getJupiterSwapInstructions(
       return null;
     }
     return data;
-  } catch (e) {
+  } catch (e: any) {
+    console.log(`   Swap instructions exception: ${e.message?.slice(0, 80)}`);
     return null;
   }
 }
