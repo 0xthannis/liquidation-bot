@@ -321,6 +321,7 @@ impl PositionScanner {
         let program_id = ProgramIds::marginfi();
         let group = ProgramIds::marginfi_group();
 
+        // Filter by group membership only, without exact DataSize
         let config = RpcProgramAccountsConfig {
             filters: Some(vec![
                 solana_client::rpc_filter::RpcFilterType::Memcmp(
@@ -329,7 +330,6 @@ impl PositionScanner {
                         group.to_bytes().to_vec(),
                     )
                 ),
-                solana_client::rpc_filter::RpcFilterType::DataSize(2304),
             ]),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
@@ -344,7 +344,7 @@ impl PositionScanner {
             .get_program_accounts_with_config(&program_id, config)
             .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
 
-        log::info!("  Marginfi: {} accounts fetched", accounts.len());
+        log::info!("  Marginfi: {} accounts fetched (group: {})", accounts.len(), group);
 
         let mut opportunities = Vec::new();
 
@@ -420,12 +420,18 @@ impl PositionScanner {
     async fn scan_kamino(&self) -> Result<Vec<LiquidationOpportunity>> {
         let program_id = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD")?;
 
-        // Filter by minimum data size (Obligation accounts vary from ~1200 to ~3000+ bytes)
-        // Using memcmp filter for Obligation discriminator instead of exact size
+        // Kamino Obligation discriminator: sha256("account:Obligation")[0..8]
+        let obligation_discriminator: [u8; 8] = [168, 206, 141, 106, 88, 76, 172, 167];
+        
         let config = RpcProgramAccountsConfig {
             filters: Some(vec![
-                // Minimum size filter - obligations are at least 1200 bytes
-                solana_client::rpc_filter::RpcFilterType::DataSize(1300),
+                // Filter by discriminator at offset 0
+                solana_client::rpc_filter::RpcFilterType::Memcmp(
+                    solana_client::rpc_filter::Memcmp::new_raw_bytes(
+                        0,
+                        obligation_discriminator.to_vec(),
+                    )
+                ),
             ]),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
@@ -519,10 +525,19 @@ async fn scan_kamino_parallel(
 
     let program_id = Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD")?;
 
+    // Use discriminator filter instead of DataSize (which is exact match)
+    // Kamino Obligation discriminator: sha256("account:Obligation")[0..8]
+    let obligation_discriminator: [u8; 8] = [168, 206, 141, 106, 88, 76, 172, 167];
+    
     let config = RpcProgramAccountsConfig {
         filters: Some(vec![
-            // Minimum size filter - obligations are at least 1200 bytes
-            solana_client::rpc_filter::RpcFilterType::DataSize(1300),
+            // Filter by discriminator at offset 0
+            solana_client::rpc_filter::RpcFilterType::Memcmp(
+                solana_client::rpc_filter::Memcmp::new_raw_bytes(
+                    0,
+                    obligation_discriminator.to_vec(),
+                )
+            ),
         ]),
         account_config: RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64),
@@ -622,15 +637,17 @@ async fn scan_marginfi_parallel(
     let program_id = ProgramIds::marginfi();
     let group = ProgramIds::marginfi_group();
 
+    // MarginfiAccount discriminator: first 8 bytes identify account type
+    // We filter by group membership only, without exact DataSize
     let config = RpcProgramAccountsConfig {
         filters: Some(vec![
+            // Filter by marginfi group at offset 8 (after discriminator)
             solana_client::rpc_filter::RpcFilterType::Memcmp(
                 solana_client::rpc_filter::Memcmp::new_raw_bytes(
                     8,
                     group.to_bytes().to_vec(),
                 )
             ),
-            solana_client::rpc_filter::RpcFilterType::DataSize(2304),
         ]),
         account_config: RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64),
@@ -645,7 +662,7 @@ async fn scan_marginfi_parallel(
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
 
-    log::info!("  [Parallel] Marginfi: {} accounts fetched", accounts.len());
+    log::info!("  [Parallel] Marginfi: {} accounts fetched (group: {})", accounts.len(), group);
 
     let mut opportunities = Vec::new();
     let mut parsed_count = 0u64;
