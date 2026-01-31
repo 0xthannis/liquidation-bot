@@ -305,12 +305,14 @@ async function executeFlashLoanArbitrage(
   instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
   instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })); // Higher priority
   
-  // Jito tip for faster inclusion (0.001 SOL = competitive)
-  const tipAmount = Math.max(100000, Math.floor(profit * 0.1)); // 10% of profit or 0.0001 SOL min
+  // Jito tip for faster inclusion
+  // Fixed tip: 0.0001 SOL (100K lamports) - cheap but competitive
+  // Only pay from your SOL balance, not from profit
+  const JITO_TIP_LAMPORTS = 100_000; // 0.0001 SOL ≈ $0.02
   instructions.push(SystemProgram.transfer({
     fromPubkey: keypair.publicKey,
     toPubkey: JITO_TIP_ACCOUNT,
-    lamports: tipAmount,
+    lamports: JITO_TIP_LAMPORTS,
   }));
   
   // Create ATAs if needed for both tokens
