@@ -1,0 +1,26 @@
+{
+  "name": "flash-arb-bot",
+  "version": "1.0.0",
+  "description": "Arbitrage bot with Kamino flash loans + Jupiter swaps",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/flash-arb.js",
+    "dev": "tsx src/flash-arb.ts",
+    "arb": "tsx src/flash-arb.ts"
+  },
+  "dependencies": {
+    "@kamino-finance/klend-sdk": "^3.2.1",
+    "@solana/web3.js": "^1.95.0",
+    "@solana/spl-token": "^0.4.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.3.1",
+    "decimal.js": "^10.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "tsx": "^4.7.0"
+  }
+}
