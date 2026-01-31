@@ -26,15 +26,15 @@ mod kamino_instructions {
     
     /// Discriminator pour flash_borrow_reserve_liquidity
     /// sha256("global:flash_borrow_reserve_liquidity")[0..8]
-    pub const FLASH_BORROW_DISCRIMINATOR: [u8; 8] = [0x49, 0x1c, 0x93, 0x8a, 0x85, 0x92, 0x8b, 0x77];
+    pub const FLASH_BORROW_DISCRIMINATOR: [u8; 8] = [0x87, 0xe7, 0x34, 0xa7, 0x07, 0x34, 0xd4, 0xc1];
     
     /// Discriminator pour flash_repay_reserve_liquidity
     /// sha256("global:flash_repay_reserve_liquidity")[0..8]
-    pub const FLASH_REPAY_DISCRIMINATOR: [u8; 8] = [0x4b, 0x53, 0xd2, 0x58, 0x9a, 0x8f, 0x7c, 0x21];
+    pub const FLASH_REPAY_DISCRIMINATOR: [u8; 8] = [0xb9, 0x75, 0x00, 0xcb, 0x60, 0xf5, 0xb4, 0xba];
     
     /// Discriminator pour liquidate_obligation_and_redeem_reserve_collateral
     /// sha256("global:liquidate_obligation_and_redeem_reserve_collateral")[0..8]
-    pub const LIQUIDATE_DISCRIMINATOR: [u8; 8] = [0xe5, 0x4b, 0x8b, 0x37, 0x9a, 0x65, 0x3e, 0x41];
+    pub const LIQUIDATE_DISCRIMINATOR: [u8; 8] = [0xb1, 0x47, 0x9a, 0xbc, 0xe2, 0x85, 0x4a, 0x37];
 
     /// Construit l'instruction flash_borrow_reserve_liquidity
     /// Emprunte des tokens sans collateral, à rembourser dans la même tx
