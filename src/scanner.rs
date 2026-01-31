@@ -457,16 +457,24 @@ impl PositionScanner {
         for (pubkey, account) in accounts.iter().take(self.config.batch_size) {
             if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
                 if obligation.is_liquidatable() {
-                    let _current_ltv = obligation.loan_to_value();
-                    let total_debt = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
-                    let max_liquidatable = total_debt / 2;
+                    let health = obligation.health_ratio();
                     
-                    // Skip unrealistic values (parsing errors) - max 1000 SOL
-                    if max_liquidatable > 1_000_000_000_000 || max_liquidatable == 0 {
+                    // Only process accounts with reasonable health ratio (0 < health < 1)
+                    if health <= 0.0 || health >= 1.0 {
                         continue;
                     }
                     
-                    let bonus_bps = 500u16;
+                    // Estimate debt using 2^60 scaling factor
+                    let debt_usd_scaled = obligation.borrowed_assets_market_value_sf as f64 / (1u128 << 60) as f64;
+                    let debt_sol_estimate = debt_usd_scaled / 200.0;
+                    let debt_lamports = (debt_sol_estimate * 1_000_000_000.0) as u64;
+                    let max_liquidatable = debt_lamports / 5;
+                    
+                    if max_liquidatable < 1_000_000 || max_liquidatable > 100_000_000_000 {
+                        continue;
+                    }
+                    
+                    let bonus_bps = if health < 0.5 { 500u16 } else { 200u16 };
 
                     let estimated_profit = math::estimate_profit(
                         max_liquidatable,
@@ -484,9 +492,9 @@ impl PositionScanner {
                             liab_bank: obligation.borrow_reserve,
                             asset_mint: Pubkey::default(),
                             liab_mint: Pubkey::default(),
-                            health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
+                            health_factor: Decimal::from_f64(health).unwrap_or(Decimal::ZERO),
                             asset_amount: obligation.deposited_amount,
-                            liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000_000_000) as u64,
+                            liab_amount: debt_lamports,
                             max_liquidatable,
                             liquidation_bonus_bps: bonus_bps,
                             estimated_profit_lamports: estimated_profit,
@@ -591,18 +599,34 @@ async fn scan_kamino_parallel(
             
             if obligation.is_liquidatable() {
                 liquidatable_count += 1;
-                // Kamino uses 10^18 scale factor (WAD) for _sf values
-                // Convert to lamports: divide by 10^18, then multiply by 10^9 (lamports per SOL)
-                // Net: divide by 10^9
-                let total_debt_lamports = (obligation.borrowed_assets_market_value_sf / 1_000_000_000_000_000_000) as u64;
-                let max_liquidatable = total_debt_lamports / 2;
                 
-                // Skip unrealistic values (parsing errors) - max 1000 SOL = 1 trillion lamports
-                if max_liquidatable > 1_000_000_000_000 || max_liquidatable == 0 {
+                // Kamino _sf values are scaled by 2^60 (not 10^18)
+                // To get USD value: divide by 2^60 then multiply by decimals
+                // For lamports estimation: use the raw health ratio
+                let health = obligation.health_ratio();
+                
+                // Only process accounts with reasonable health ratio (0 < health < 1)
+                if health <= 0.0 || health >= 1.0 {
                     continue;
                 }
                 
-                let bonus_bps = 500u16;
+                // Estimate debt in lamports based on borrowed_assets_market_value_sf
+                // _sf uses 2^60 scaling, USD values need price conversion
+                // Simplified: assume ~$200/SOL, estimate conservatively
+                let debt_usd_scaled = obligation.borrowed_assets_market_value_sf as f64 / (1u128 << 60) as f64;
+                let debt_sol_estimate = debt_usd_scaled / 200.0; // Approximate SOL price
+                let debt_lamports = (debt_sol_estimate * 1_000_000_000.0) as u64;
+                
+                // Max liquidatable is 20% of debt (Kamino partial liquidation)
+                let max_liquidatable = debt_lamports / 5;
+                
+                // Skip if too small (< 0.001 SOL) or too large (> 100 SOL)
+                if max_liquidatable < 1_000_000 || max_liquidatable > 100_000_000_000 {
+                    continue;
+                }
+                
+                // Liquidation bonus 2-5% depending on health
+                let bonus_bps = if health < 0.5 { 500u16 } else { 200u16 };
 
                 let estimated_profit = math::estimate_profit(
                     max_liquidatable,
@@ -612,7 +636,6 @@ async fn scan_kamino_parallel(
                 );
 
                 if estimated_profit > 0 {
-                    // Skip RPC call in hot loop - use default mints, fetch later if needed
                     opportunities.push(LiquidationOpportunity {
                         protocol: "Kamino".to_string(),
                         account_address: *pubkey,
@@ -621,9 +644,9 @@ async fn scan_kamino_parallel(
                         liab_bank: obligation.borrow_reserve,
                         asset_mint: Pubkey::default(),
                         liab_mint: Pubkey::default(),
-                        health_factor: Decimal::from_f64(obligation.health_ratio()).unwrap_or(Decimal::ZERO),
+                        health_factor: Decimal::from_f64(health).unwrap_or(Decimal::ZERO),
                         asset_amount: obligation.deposited_amount,
-                        liab_amount: (obligation.borrowed_amount_sf / 1_000_000_000_000) as u64,
+                        liab_amount: debt_lamports,
                         max_liquidatable,
                         liquidation_bonus_bps: bonus_bps,
                         estimated_profit_lamports: estimated_profit,

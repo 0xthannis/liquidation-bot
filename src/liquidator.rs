@@ -8,6 +8,8 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     signer::Signer,
     instruction::{Instruction, AccountMeta},
+    compute_budget::ComputeBudgetInstruction,
+    system_instruction,
 };
 use solana_client::rpc_client::RpcClient;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +17,24 @@ use std::str::FromStr;
 
 use crate::config::{BotConfig, ProgramIds};
 use crate::utils::LiquidationOpportunity;
+
+/// Jito tip accounts (one of these should receive the tip)
+const JITO_TIP_ACCOUNTS: [&str; 8] = [
+    "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+    "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+    "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+    "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+    "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+    "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+    "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+    "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+];
+
+/// Minimum priority fee (micro-lamports per compute unit)
+const MIN_PRIORITY_FEE: u64 = 1000; // 0.001 lamports per CU
+
+/// Minimum Jito tip (lamports)
+const MIN_JITO_TIP: u64 = 1000; // 0.000001 SOL = 1000 lamports
 
 /// Instructions Kamino Lending (KLend)
 /// Discriminators calculés via sha256("global:<instruction_name>")[0..8]
@@ -470,7 +490,27 @@ impl Liquidator {
             0, // borrow_instruction_index = 0 (first instruction)
         );
 
-        let instructions = vec![flash_borrow_ix, liquidate_ix, flash_repay_ix];
+        // Build final instruction list with priority fees and Jito tip
+        let mut instructions = Vec::new();
+        
+        // 1. Set compute unit limit (400k should be enough for flash loan + liquidation)
+        instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(400_000));
+        
+        // 2. Set priority fee (micro-lamports per compute unit)
+        instructions.push(ComputeBudgetInstruction::set_compute_unit_price(MIN_PRIORITY_FEE));
+        
+        // 3. Jito tip - transfer to random Jito tip account
+        let jito_tip_account = Pubkey::from_str(JITO_TIP_ACCOUNTS[0]).unwrap();
+        instructions.push(system_instruction::transfer(
+            &self.keypair.pubkey(),
+            &jito_tip_account,
+            MIN_JITO_TIP,
+        ));
+        
+        // 4. Flash loan + liquidation instructions
+        instructions.push(flash_borrow_ix);
+        instructions.push(liquidate_ix);
+        instructions.push(flash_repay_ix);
 
         // Simulate first
         let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
@@ -558,7 +598,25 @@ impl Liquidator {
             opp.max_liquidatable,
         );
 
-        let instructions = vec![liquidate_ix];
+        // Build final instruction list with priority fees and Jito tip
+        let mut instructions = Vec::new();
+        
+        // 1. Set compute unit limit
+        instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(200_000));
+        
+        // 2. Set priority fee
+        instructions.push(ComputeBudgetInstruction::set_compute_unit_price(MIN_PRIORITY_FEE));
+        
+        // 3. Jito tip
+        let jito_tip_account = Pubkey::from_str(JITO_TIP_ACCOUNTS[0]).unwrap();
+        instructions.push(system_instruction::transfer(
+            &self.keypair.pubkey(),
+            &jito_tip_account,
+            MIN_JITO_TIP,
+        ));
+        
+        // 4. Liquidation instruction
+        instructions.push(liquidate_ix);
 
         let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
         let message = solana_sdk::message::Message::new(&instructions, Some(&self.keypair.pubkey()));
