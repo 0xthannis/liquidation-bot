@@ -51,9 +51,6 @@ chrono = "0.4"
 bincode = "1.3"
 borsh = "1.3"
 
-# Kamino Lend integration
-kamino-lend = { version = "0.4.1", features = ["no-entrypoint"] }
-
 # Async utilities
 futures = "0.3"
 
