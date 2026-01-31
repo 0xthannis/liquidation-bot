@@ -305,14 +305,28 @@ async function executeFlashLoanArbitrage(
   instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
   instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })); // Higher priority
   
-  // Jito tip for faster inclusion
-  // Fixed tip: 0.0001 SOL (100K lamports) - cheap but competitive
-  // Only pay from your SOL balance, not from profit
-  const JITO_TIP_LAMPORTS = 100_000; // 0.0001 SOL ≈ $0.02
+  // Jito tip for faster inclusion - DYNAMIC based on profit
+  // Tip is part of atomic tx: if tx fails, tip is NOT paid
+  // If tx succeeds, profit covers the tip
+  // Strategy: 20% of profit to outbid competition, capped at 0.05 SOL
+  let tipLamports: number;
+  if (flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL') {
+    // Profit is already in lamports
+    tipLamports = Math.floor(profit * 0.20); // 20% of profit
+  } else {
+    // Profit is in micro-USDC, convert roughly to lamports
+    // Assume 1 SOL ≈ 200 USDC, so 1 USDC ≈ 0.005 SOL = 5M lamports / 1M micro = 5 lamports per micro
+    tipLamports = Math.floor(profit * 5 * 0.20); // 20% of profit in lamports
+  }
+  // Minimum 0.001 SOL, maximum 0.05 SOL
+  tipLamports = Math.max(1_000_000, Math.min(tipLamports, 50_000_000));
+  
+  console.log(`   💸 Jito tip: ${(tipLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+  
   instructions.push(SystemProgram.transfer({
     fromPubkey: keypair.publicKey,
     toPubkey: JITO_TIP_ACCOUNT,
-    lamports: JITO_TIP_LAMPORTS,
+    lamports: tipLamports,
   }));
   
   // Create ATAs if needed for both tokens
