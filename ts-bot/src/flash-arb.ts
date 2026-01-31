@@ -40,8 +40,9 @@ const TOKENS: Record<string, string> = {
   JitoSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
 };
 
-// Jupiter API
-const JUPITER_API = 'https://quote-api.jup.ag/v6';
+// Jupiter API (new v1 endpoint)
+const JUPITER_QUOTE_API = 'https://api.jup.ag/swap/v1/quote';
+const JUPITER_SWAP_API = 'https://api.jup.ag/swap/v1/swap-instructions';
 
 // Jito tip account
 const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
@@ -81,14 +82,21 @@ async function getJupiterQuote(
   slippageBps: number = 100
 ): Promise<JupiterQuote | null> {
   try {
-    const url = `${JUPITER_API}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`;
+    const url = `${JUPITER_QUOTE_API}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`;
     const response = await fetch(url);
     if (!response.ok) {
-      console.log(`   Quote error: ${response.status}`);
+      const text = await response.text();
+      console.log(`   Quote error ${response.status}: ${text.slice(0, 80)}`);
       return null;
     }
-    return await response.json();
-  } catch (e) {
+    const data = await response.json();
+    if (data.error) {
+      console.log(`   Quote API error: ${data.error}`);
+      return null;
+    }
+    return data;
+  } catch (e: any) {
+    console.log(`   Quote exception: ${e.message?.slice(0, 50)}`);
     return null;
   }
 }
@@ -98,7 +106,7 @@ async function getJupiterSwapInstructions(
   userPublicKey: PublicKey
 ): Promise<SwapInstructions | null> {
   try {
-    const response = await fetch(`${JUPITER_API}/swap-instructions`, {
+    const response = await fetch(JUPITER_SWAP_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
