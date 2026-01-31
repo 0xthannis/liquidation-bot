@@ -240,8 +240,9 @@ async function executeFlashLoanArbitrage(
   const flashLoanFee = flashLoanAmount * 9n / 10000n; // 0.09% Kamino fee
   const totalRepay = flashLoanAmount + flashLoanFee;
   
-  // Check profitability
-  if (amountOut <= totalRepay + 20000n) { // Need some buffer for gas
+  // Check profitability - need buffer for gas (~0.001 SOL = 1M lamports worth)
+  const gasBuffer = decimals === 9 ? 1_000_000n : 1000n; // 0.001 SOL or 0.001 USDC
+  if (amountOut <= totalRepay + gasBuffer) {
     const diff = Number(totalRepay - amountOut);
     console.log(`   ❌ Not profitable: -${diff / Math.pow(10, decimals)} ${flashTokenSymbol}`);
     return null;
@@ -339,13 +340,14 @@ async function executeFlashLoanArbitrage(
   }
   
   // FLASH REPAY - need to rebuild with correct borrow index
+  // Note: Kamino SDK calculates the fee internally, we pass the original borrow amount
   const { flashRepayIx: flashRepayIxCorrected } = getFlashLoanInstructions({
     borrowIxIndex: flashBorrowIndex,
     userTransferAuthority: keypair.publicKey,
     lendingMarketAuthority,
     lendingMarketAddress: market.getAddress(),
     reserve,
-    amountLamports: totalRepay, // Include fee
+    amountLamports: flashLoanAmount, // Original amount - SDK adds fee
     destinationAta: userAta,
     referrerAccount: undefined,
     referrerTokenState: undefined,
@@ -455,15 +457,16 @@ async function main() {
   await market.loadReserves();
   console.log(`✅ ${market.reserves.size} reserves loaded\n`);
   
-  // Arbitrage configurations
+  // Arbitrage configurations - BIGGER amounts = BIGGER profits
+  // Flash loans have NO collateral requirement - borrow as much as Kamino has liquidity
   const arbConfigs = [
-    // USDC flash loans
-    { flash: 'USDC', swap: 'SOL', amounts: [100n, 1000n, 10000n, 100000n] }, // USDC amounts
-    { flash: 'USDC', swap: 'USDT', amounts: [1000n, 10000n, 100000n] },
-    { flash: 'USDC', swap: 'JitoSOL', amounts: [100n, 1000n, 10000n] },
-    // SOL flash loans
-    { flash: 'SOL', swap: 'USDC', amounts: [1n, 10n, 100n] }, // SOL amounts
-    { flash: 'SOL', swap: 'JitoSOL', amounts: [1n, 10n, 100n] },
+    // USDC flash loans - up to 1M USDC
+    { flash: 'USDC', swap: 'SOL', amounts: [10000n, 50000n, 100000n, 500000n, 1000000n] },
+    { flash: 'USDC', swap: 'USDT', amounts: [10000n, 100000n, 500000n] },
+    { flash: 'USDC', swap: 'JitoSOL', amounts: [10000n, 50000n, 100000n] },
+    // SOL flash loans - up to 1000 SOL
+    { flash: 'SOL', swap: 'USDC', amounts: [10n, 50n, 100n, 500n, 1000n] },
+    { flash: 'SOL', swap: 'JitoSOL', amounts: [10n, 100n, 500n] },
   ];
   
   console.log('🔍 Starting arbitrage scanner...\n');
@@ -495,8 +498,8 @@ async function main() {
           // Silently continue
         }
         
-        // Small delay between checks
-        await new Promise(r => setTimeout(r, 100));
+        // Delay to respect Jupiter rate limit (1 RPS on free tier)
+        await new Promise(r => setTimeout(r, 1100));
       }
     }
     
@@ -509,7 +512,7 @@ async function main() {
     }
     
     // Delay between full scans
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 5000));
   }
 }
 
