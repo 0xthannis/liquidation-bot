@@ -135,13 +135,13 @@ impl ArbitrageScanner {
         let sol = Pubkey::from_str("So11111111111111111111111111111111111111112")?;
         let usdt = Pubkey::from_str("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB")?;
 
-        // Montants d'emprunt flash loan pour l'arbitrage (GROS MONTANTS)
+        // Montants d'emprunt flash loan pour l'arbitrage (MAX PROFITS)
         let test_amounts = vec![
-            1_000_000_000u64,     // 1,000 USDC
-            5_000_000_000u64,     // 5,000 USDC
-            10_000_000_000u64,    // 10,000 USDC
             50_000_000_000u64,    // 50,000 USDC
             100_000_000_000u64,   // 100,000 USDC
+            250_000_000_000u64,   // 250,000 USDC
+            500_000_000_000u64,   // 500,000 USDC
+            1_000_000_000_000u64, // 1,000,000 USDC (1M)
         ];
 
         // Scanner les paires principales
