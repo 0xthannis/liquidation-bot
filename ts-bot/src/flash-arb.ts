@@ -218,7 +218,9 @@ async function executeFlashLoanArbitrage(
   }
   
   // 2. Get Jupiter quotes for round-trip
-  const quoteForward = await getJupiterQuote(flashMint, swapMint, Number(flashLoanAmount), 100);
+  // Use tighter slippage for larger amounts
+  const slippageBps = Number(flashLoanAmount) > 100_000_000_000n ? 50 : 100; // 0.5% for >100K, else 1%
+  const quoteForward = await getJupiterQuote(flashMint, swapMint, Number(flashLoanAmount), slippageBps);
   if (!quoteForward) {
     console.log('   ❌ No quote forward');
     return null;
@@ -230,7 +232,7 @@ async function executeFlashLoanArbitrage(
     return null;
   }
   
-  const quoteReturn = await getJupiterQuote(swapMint, flashMint, amountMid, 100);
+  const quoteReturn = await getJupiterQuote(swapMint, flashMint, amountMid, slippageBps);
   if (!quoteReturn) {
     console.log('   ❌ No quote return');
     return null;
@@ -269,8 +271,9 @@ async function executeFlashLoanArbitrage(
     return null;
   }
   
-  // 4. Get user's ATA for the flash loan token
-  const userAta = await getAssociatedTokenAddress(new PublicKey(flashMint), keypair.publicKey);
+  // 4. Get user's ATAs for both tokens
+  const userFlashAta = await getAssociatedTokenAddress(new PublicKey(flashMint), keypair.publicKey);
+  const userSwapAta = await getAssociatedTokenAddress(new PublicKey(swapMint), keypair.publicKey);
   
   // 5. Build flash loan instructions using Kamino SDK
   const lendingMarketAuthority = await market.getLendingMarketAuthority();
@@ -282,7 +285,7 @@ async function executeFlashLoanArbitrage(
     lendingMarketAddress: market.getAddress(),
     reserve,
     amountLamports: flashLoanAmount,
-    destinationAta: userAta,
+    destinationAta: userFlashAta,
     referrerAccount: undefined,
     referrerTokenState: undefined,
     programId: PROGRAM_ID,
@@ -302,17 +305,22 @@ async function executeFlashLoanArbitrage(
   instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
   instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })); // Higher priority
   
-  // Jito tip for faster inclusion
+  // Jito tip for faster inclusion (0.001 SOL = competitive)
+  const tipAmount = Math.max(100000, Math.floor(profit * 0.1)); // 10% of profit or 0.0001 SOL min
   instructions.push(SystemProgram.transfer({
     fromPubkey: keypair.publicKey,
     toPubkey: JITO_TIP_ACCOUNT,
-    lamports: 10000, // 0.00001 SOL
+    lamports: tipAmount,
   }));
   
-  // Create ATA if needed
-  const { createIx: createAtaIx } = await ensureAta(connection, keypair, new PublicKey(flashMint));
-  if (createAtaIx) {
-    instructions.push(createAtaIx);
+  // Create ATAs if needed for both tokens
+  const { createIx: createFlashAtaIx } = await ensureAta(connection, keypair, new PublicKey(flashMint));
+  const { createIx: createSwapAtaIx } = await ensureAta(connection, keypair, new PublicKey(swapMint));
+  if (createFlashAtaIx) {
+    instructions.push(createFlashAtaIx);
+  }
+  if (createSwapAtaIx) {
+    instructions.push(createSwapAtaIx);
   }
   
   // Record flash borrow index (after compute budget + tip + maybe ATA)
@@ -348,7 +356,7 @@ async function executeFlashLoanArbitrage(
     lendingMarketAddress: market.getAddress(),
     reserve,
     amountLamports: flashLoanAmount, // Original amount - SDK adds fee
-    destinationAta: userAta,
+    destinationAta: userFlashAta,
     referrerAccount: undefined,
     referrerTokenState: undefined,
     programId: PROGRAM_ID,
@@ -471,7 +479,7 @@ async function main() {
   
   console.log('🔍 Starting arbitrage scanner...\n');
   console.log('Pairs: USDC<->SOL, USDC<->USDT, USDC<->JitoSOL, SOL<->USDC, SOL<->JitoSOL');
-  console.log('Amounts: 100 to 100,000 USDC | 1 to 100 SOL\n');
+  console.log('Amounts: 10K to 1M USDC | 10 to 1000 SOL\n');
   
   let scanCount = 0;
   
