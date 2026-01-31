@@ -257,9 +257,16 @@ async function executeFlashLoanArbitrage(
   
   console.log(`   💰 Profit: ${profitDisplay.toFixed(6)} ${flashTokenSymbol} (${profitPercent.toFixed(4)}%)`);
   
-  // Only execute if profit > 0.01%
-  if (profitPercent < 0.01) {
-    console.log('   ⏭️ Profit too small, skipping');
+  // Only execute if profit > $1 equivalent (skip dust)
+  // For USDC: profit is in micro-USDC, so 1$ = 1_000_000
+  // For SOL: profit is in lamports, 1$ ≈ 0.005 SOL = 5_000_000 lamports
+  const minProfitUsd = 1.0; // Minimum $1 profit
+  const profitInUsd = (flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL') 
+    ? profit / 200_000_000 // ~$200/SOL, so lamports / 200M = USD
+    : profit / 1_000_000;  // micro-USDC / 1M = USD
+  
+  if (profitInUsd < minProfitUsd) {
+    console.log(`   ⏭️ Profit too small: $${profitInUsd.toFixed(2)} < $${minProfitUsd}`);
     return null;
   }
   
