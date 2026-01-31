@@ -79,15 +79,19 @@ impl KaminoObligation {
         // Owner at offset 56
         let owner = Pubkey::try_from(&data[56..88]).ok()?;
         
-        // Scaled values (u128 = 16 bytes each)
-        // deposited_value_sf at 88
-        let deposited_value_sf = u128::from_le_bytes(data[88..104].try_into().ok()?);
-        // borrowed_assets_market_value_sf at 104
-        let borrowed_assets_market_value_sf = u128::from_le_bytes(data[104..120].try_into().ok()?);
-        // allowed_borrow_value_sf at 120
-        let allowed_borrow_value_sf = u128::from_le_bytes(data[120..136].try_into().ok()?);
-        // unhealthy_borrow_value_sf at 136
-        let unhealthy_borrow_value_sf = u128::from_le_bytes(data[136..152].try_into().ok()?);
+        // Kamino Obligation structure (from Anchor IDL):
+        // After discriminator (8) + LastUpdate (16) + lending_market (32) + owner (32) = offset 88
+        // But actual structure may differ - let's try offset after padding
+        // Real structure: discriminator(8) + tag(8) + last_update(16) + lending_market(32) + owner(32) = 96
+        // Then: deposited_value_sf(16) + borrow_factor_adjusted...(16) + allowed_borrow_value_sf(16) + unhealthy_borrow_value_sf(16)
+        
+        // Try different offsets - the real structure seems to start values at offset 96
+        let base_offset = 96; // After discriminator + tag + last_update + lending_market + owner
+        
+        let deposited_value_sf = u128::from_le_bytes(data[base_offset..base_offset+16].try_into().ok()?);
+        let borrowed_assets_market_value_sf = u128::from_le_bytes(data[base_offset+16..base_offset+32].try_into().ok()?);
+        let allowed_borrow_value_sf = u128::from_le_bytes(data[base_offset+32..base_offset+48].try_into().ok()?);
+        let unhealthy_borrow_value_sf = u128::from_le_bytes(data[base_offset+48..base_offset+64].try_into().ok()?);
         
         // Skip super_unhealthy (152..168), borrowing_isolated (168..176), etc.
         // Deposits array starts around offset 200-300 depending on version
