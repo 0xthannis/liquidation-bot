@@ -168,25 +168,28 @@ impl KaminoObligation {
         self.borrowed_assets_market_value_sf as f64 / self.deposited_value_sf as f64
     }
 
-    /// Check if liquidatable - borrowed value exceeds unhealthy threshold
-    fn is_liquidatable(&self) -> bool {
-        // Must have borrowed something
-        if self.borrowed_assets_market_value_sf == 0 {
-            return false;
-        }
-        // Unhealthy when borrowed > unhealthy_borrow_value
-        self.borrowed_assets_market_value_sf > self.unhealthy_borrow_value_sf
+    /// Check if has active debt
+    fn has_debt(&self) -> bool {
+        self.borrowed_assets_market_value_sf > 0
     }
     
-    /// Get health ratio (< 1.0 means liquidatable)
-    fn health_ratio(&self) -> f64 {
-        if self.borrowed_assets_market_value_sf == 0 {
-            return f64::MAX;
-        }
-        if self.unhealthy_borrow_value_sf == 0 {
+    /// Get LTV (Loan-to-Value) ratio: borrowed / deposited
+    /// Higher LTV = more risky, liquidatable when > ~80%
+    fn ltv_ratio(&self) -> f64 {
+        if self.deposited_value_sf == 0 {
             return 0.0;
         }
-        self.unhealthy_borrow_value_sf as f64 / self.borrowed_assets_market_value_sf as f64
+        self.borrowed_assets_market_value_sf as f64 / self.deposited_value_sf as f64
+    }
+    
+    /// Check if liquidatable based on LTV
+    /// Kamino typically liquidates at ~83% LTV
+    fn is_liquidatable(&self) -> bool {
+        if !self.has_debt() {
+            return false;
+        }
+        // Consider liquidatable if LTV > 80%
+        self.ltv_ratio() > 0.80
     }
 }
 
@@ -457,24 +460,27 @@ impl PositionScanner {
         for (pubkey, account) in accounts.iter().take(self.config.batch_size) {
             if let Some(obligation) = KaminoObligation::from_account_data(&account.data) {
                 if obligation.is_liquidatable() {
-                    let health = obligation.health_ratio();
+                    let ltv = obligation.ltv_ratio();
                     
-                    // Only process accounts with reasonable health ratio (0 < health < 1)
-                    if health <= 0.0 || health >= 1.0 {
+                    // Skip if LTV is unrealistic (> 200%)
+                    if ltv > 2.0 {
                         continue;
                     }
                     
-                    // Estimate debt using 2^60 scaling factor
-                    let debt_usd_scaled = obligation.borrowed_assets_market_value_sf as f64 / (1u128 << 60) as f64;
-                    let debt_sol_estimate = debt_usd_scaled / 200.0;
-                    let debt_lamports = (debt_sol_estimate * 1_000_000_000.0) as u64;
-                    let max_liquidatable = debt_lamports / 5;
+                    let borrowed_amount = obligation.borrowed_amount_sf;
+                    let max_liquidatable = if borrowed_amount > 0 {
+                        let capped = std::cmp::min(borrowed_amount / 5, 100_000_000_000_000_000);
+                        std::cmp::max(capped as u64, 1_000_000)
+                    } else {
+                        let deposit_est = (obligation.deposited_value_sf / (1u128 << 40)) as u64;
+                        std::cmp::min(deposit_est / 10, 100_000_000_000)
+                    };
                     
-                    if max_liquidatable < 1_000_000 || max_liquidatable > 100_000_000_000 {
+                    if max_liquidatable < 1_000_000 {
                         continue;
                     }
                     
-                    let bonus_bps = if health < 0.5 { 500u16 } else { 200u16 };
+                    let bonus_bps = if ltv > 0.9 { 500u16 } else { 300u16 };
 
                     let estimated_profit = math::estimate_profit(
                         max_liquidatable,
@@ -492,9 +498,9 @@ impl PositionScanner {
                             liab_bank: obligation.borrow_reserve,
                             asset_mint: Pubkey::default(),
                             liab_mint: Pubkey::default(),
-                            health_factor: Decimal::from_f64(health).unwrap_or(Decimal::ZERO),
+                            health_factor: Decimal::from_f64(1.0 - ltv).unwrap_or(Decimal::ZERO),
                             asset_amount: obligation.deposited_amount,
-                            liab_amount: debt_lamports,
+                            liab_amount: max_liquidatable,
                             max_liquidatable,
                             liquidation_bonus_bps: bonus_bps,
                             estimated_profit_lamports: estimated_profit,
@@ -600,42 +606,47 @@ async fn scan_kamino_parallel(
             if obligation.is_liquidatable() {
                 liquidatable_count += 1;
                 
-                let health = obligation.health_ratio();
+                let ltv = obligation.ltv_ratio();
                 
-                // Debug: log first few liquidatable accounts to understand the data
+                // Debug: log first few liquidatable accounts
                 if liquidatable_count <= 3 {
-                    log::info!("  [DEBUG] Account {}: borrowed_sf={}, unhealthy_sf={}, deposited_sf={}, health={:.4}",
+                    log::info!("  [DEBUG] Account {}: LTV={:.2}%, borrowed_sf={}, deposited_sf={}",
                         pubkey,
+                        ltv * 100.0,
                         obligation.borrowed_assets_market_value_sf,
-                        obligation.unhealthy_borrow_value_sf,
-                        obligation.deposited_value_sf,
-                        health
+                        obligation.deposited_value_sf
                     );
                 }
                 
-                // Only process accounts with reasonable health ratio (0 < health < 1)
-                // If health >= 1, the account is not actually liquidatable
-                if health <= 0.0 || health >= 1.0 {
+                // LTV should be > 80% for liquidatable accounts
+                // Skip if LTV is unrealistic (> 200% indicates parsing error)
+                if ltv > 2.0 {
                     continue;
                 }
                 
-                // Estimate debt in lamports based on borrowed_assets_market_value_sf
-                // _sf uses 2^60 scaling, USD values need price conversion
-                // Simplified: assume ~$200/SOL, estimate conservatively
-                let debt_usd_scaled = obligation.borrowed_assets_market_value_sf as f64 / (1u128 << 60) as f64;
-                let debt_sol_estimate = debt_usd_scaled / 200.0; // Approximate SOL price
-                let debt_lamports = (debt_sol_estimate * 1_000_000_000.0) as u64;
+                // Estimate debt value using the borrowed_amount_sf from the borrows array
+                // This is more reliable than the market value
+                let borrowed_amount = obligation.borrowed_amount_sf;
                 
-                // Max liquidatable is 20% of debt (Kamino partial liquidation)
-                let max_liquidatable = debt_lamports / 5;
+                // Estimate max liquidatable as 20% of borrowed amount (in token units)
+                // Convert to lamports estimate (assume 1:1 for simplicity, will be adjusted by liquidation)
+                let max_liquidatable = if borrowed_amount > 0 {
+                    // Cap at reasonable values
+                    let capped = std::cmp::min(borrowed_amount / 5, 100_000_000_000_000_000); // Max 100 SOL worth
+                    std::cmp::max(capped as u64, 1_000_000) // Min 0.001 SOL
+                } else {
+                    // Fallback: estimate from deposited value
+                    let deposit_est = (obligation.deposited_value_sf / (1u128 << 40)) as u64;
+                    std::cmp::min(deposit_est / 10, 100_000_000_000) // 10% of deposit, max 100 SOL
+                };
                 
-                // Skip if too small (< 0.001 SOL) or too large (> 100 SOL)
-                if max_liquidatable < 1_000_000 || max_liquidatable > 100_000_000_000 {
+                // Skip tiny amounts
+                if max_liquidatable < 1_000_000 {
                     continue;
                 }
                 
-                // Liquidation bonus 2-5% depending on health
-                let bonus_bps = if health < 0.5 { 500u16 } else { 200u16 };
+                // Liquidation bonus based on LTV
+                let bonus_bps = if ltv > 0.9 { 500u16 } else { 300u16 };
 
                 let estimated_profit = math::estimate_profit(
                     max_liquidatable,
@@ -653,9 +664,9 @@ async fn scan_kamino_parallel(
                         liab_bank: obligation.borrow_reserve,
                         asset_mint: Pubkey::default(),
                         liab_mint: Pubkey::default(),
-                        health_factor: Decimal::from_f64(health).unwrap_or(Decimal::ZERO),
+                        health_factor: Decimal::from_f64(1.0 - ltv).unwrap_or(Decimal::ZERO), // Convert LTV to health-like value
                         asset_amount: obligation.deposited_amount,
-                        liab_amount: debt_lamports,
+                        liab_amount: max_liquidatable,
                         max_liquidatable,
                         liquidation_bonus_bps: bonus_bps,
                         estimated_profit_lamports: estimated_profit,
