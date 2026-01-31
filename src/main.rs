@@ -13,11 +13,13 @@ mod config;
 mod scanner;
 mod liquidator;
 mod utils;
+mod arbitrage;
 
 use config::BotConfig;
 use scanner::PositionScanner;
 use liquidator::Liquidator;
 use utils::{BotStats, math};
+use arbitrage::{ArbitrageScanner, ArbitrageExecutor};
 
 #[derive(Parser)]
 #[command(name = "liquidation-bot")]
@@ -86,6 +88,8 @@ async fn start_bot(force_dry_run: bool) -> Result<()> {
 
     let scanner = Arc::new(Mutex::new(PositionScanner::new(config.clone())?));
     let liquidator = Arc::new(Liquidator::new(config.clone())?);
+    let arb_scanner = Arc::new(Mutex::new(ArbitrageScanner::new(config.clone())?));
+    let arb_executor = Arc::new(ArbitrageExecutor::new(config.clone())?);
     let stats = Arc::new(Mutex::new(BotStats::new()));
 
     // Vérifications
@@ -160,6 +164,32 @@ async fn start_bot(force_dry_run: bool) -> Result<()> {
             }
 
             tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // Scan arbitrage opportunities
+        {
+            let mut arb = arb_scanner.lock().await;
+            match arb.scan().await {
+                Ok(arb_opps) => {
+                    if !arb_opps.is_empty() {
+                        log::info!("💱 {} arbitrage opportunities found", arb_opps.len());
+                        for arb_opp in arb_opps.iter().take(3) {
+                            log::info!("  Arb: {} -> profit: {} ({:.2}%)", 
+                                arb_opp.amount_in, arb_opp.expected_profit, arb_opp.profit_percent);
+                            
+                            match arb_executor.execute(arb_opp).await {
+                                Ok(result) => {
+                                    if result.success {
+                                        log::info!("✅ Arbitrage réussi! Profit: {}", result.profit);
+                                    }
+                                }
+                                Err(e) => log::warn!("Arbitrage error: {}", e),
+                            }
+                        }
+                    }
+                }
+                Err(e) => log::debug!("Arbitrage scan error: {}", e),
+            }
         }
 
         // Stats périodiques
