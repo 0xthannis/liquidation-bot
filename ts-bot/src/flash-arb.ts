@@ -29,6 +29,7 @@ import 'dotenv/config';
 // ============== CONFIGURATION ==============
 const RPC_URL = process.env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
+const JUPITER_API_KEY = process.env.JUPITER_API_KEY || '';
 
 // Kamino Main Market
 const KAMINO_MARKET_ADDRESS = '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF';
@@ -41,9 +42,9 @@ const TOKENS: Record<string, string> = {
   JitoSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
 };
 
-// Jupiter API (public v6 - no API key required)
-const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
-const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap-instructions';
+// Jupiter API (requires free API key from portal.jup.ag)
+const JUPITER_QUOTE_API = 'https://api.jup.ag/swap/v1/quote';
+const JUPITER_SWAP_API = 'https://api.jup.ag/swap/v1/swap-instructions';
 
 // Jito tip account
 const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
@@ -84,7 +85,11 @@ async function getJupiterQuote(
 ): Promise<JupiterQuote | null> {
   try {
     const url = `${JUPITER_QUOTE_API}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`;
-    const response = await fetch(url);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (JUPITER_API_KEY) {
+      headers['x-api-key'] = JUPITER_API_KEY;
+    }
+    const response = await fetch(url, { headers });
     if (!response.ok) {
       const text = await response.text();
       console.log(`   Quote error ${response.status}: ${text.slice(0, 80)}`);
@@ -107,9 +112,13 @@ async function getJupiterSwapInstructions(
   userPublicKey: PublicKey
 ): Promise<SwapInstructions | null> {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (JUPITER_API_KEY) {
+      headers['x-api-key'] = JUPITER_API_KEY;
+    }
     const response = await fetch(JUPITER_SWAP_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         quoteResponse: quote,
         userPublicKey: userPublicKey.toBase58(),
