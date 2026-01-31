@@ -25,6 +25,7 @@ import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } fro
 import bs58 from 'bs58';
 import fetch from 'node-fetch';
 import 'dotenv/config';
+import { startApiServer, recordTrade, recordScan, updateWalletBalance } from './api-server';
 
 // ============== CONFIGURATION ==============
 const RPC_URL = process.env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -267,6 +268,14 @@ async function executeFlashLoanArbitrage(
   
   if (profitInUsd < minProfitUsd) {
     console.log(`   ⏭️ Profit too small: $${profitInUsd.toFixed(2)} < $${minProfitUsd}`);
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: profitDisplay,
+      profitUsd: profitInUsd,
+      status: 'skipped',
+    });
     return null;
   }
   
@@ -445,6 +454,15 @@ async function executeFlashLoanArbitrage(
     
     console.log(`   ✅ SUCCESS! Sig: ${signature}`);
     console.log(`   💵 Profit: ~${profitDisplay.toFixed(6)} ${flashTokenSymbol}`);
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: profitDisplay,
+      profitUsd: profitInUsd,
+      status: 'success',
+      txHash: signature,
+    });
     return signature;
     
   } catch (e: any) {
@@ -460,6 +478,9 @@ async function main() {
   console.log('║   Using Official Kamino SDK + Jupiter API                 ║');
   console.log('╚═══════════════════════════════════════════════════════════╝\n');
   
+  // Start API server for dashboard
+  startApiServer(3001);
+  
   // Load wallet
   const keypair = loadKeypair();
   console.log(`Wallet: ${keypair.publicKey.toBase58()}`);
@@ -472,6 +493,7 @@ async function main() {
   
   const balance = await connection.getBalance(keypair.publicKey);
   console.log(`Balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+  updateWalletBalance(balance / LAMPORTS_PER_SOL);
   
   if (balance < 0.01 * LAMPORTS_PER_SOL) {
     console.error('❌ Need at least 0.01 SOL for fees');
@@ -520,6 +542,7 @@ async function main() {
         const amount = baseAmount * BigInt(Math.pow(10, decimals));
         
         try {
+          recordScan(); // Track scan for dashboard
           await executeFlashLoanArbitrage(
             connection,
             keypair,
@@ -540,6 +563,7 @@ async function main() {
     // Progress indicator
     if (scanCount % 10 === 0) {
       const newBalance = await connection.getBalance(keypair.publicKey);
+      updateWalletBalance(newBalance / LAMPORTS_PER_SOL);
       console.log(`\n[Scan #${scanCount}] Balance: ${(newBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
     } else {
       process.stdout.write('.');
