@@ -529,9 +529,9 @@ async fn scan_kamino_parallel(
     // Kamino Obligation discriminator: sha256("account:Obligation")[0..8]
     let obligation_discriminator: [u8; 8] = [168, 206, 141, 106, 88, 76, 172, 167];
     
+    // First, get just the pubkeys with minimal data (first 200 bytes) to reduce transfer
     let config = RpcProgramAccountsConfig {
         filters: Some(vec![
-            // Filter by discriminator at offset 0
             solana_client::rpc_filter::RpcFilterType::Memcmp(
                 solana_client::rpc_filter::Memcmp::new_raw_bytes(
                     0,
@@ -541,13 +541,18 @@ async fn scan_kamino_parallel(
         ]),
         account_config: RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64),
-            data_slice: None,
+            data_slice: Some(solana_account_decoder::UiDataSliceConfig {
+                offset: 0,
+                length: 400, // Get enough data for basic parsing
+            }),
             commitment: Some(CommitmentConfig::confirmed()),
             min_context_slot: None,
         },
         with_context: Some(false),
     };
 
+    log::info!("  [Parallel] Kamino: fetching obligations (this may take a moment)...");
+    
     let accounts = rpc_client
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Kamino: {}", e))?;
@@ -646,13 +651,18 @@ async fn scan_marginfi_parallel(
         ]),
         account_config: RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64),
-            data_slice: None,
+            data_slice: Some(solana_account_decoder::UiDataSliceConfig {
+                offset: 0,
+                length: 2304, // MarginfiAccount full size
+            }),
             commitment: Some(CommitmentConfig::confirmed()),
             min_context_slot: None,
         },
         with_context: Some(false),
     };
 
+    log::info!("  [Parallel] Marginfi: fetching accounts (this may take a moment)...");
+    
     let accounts = rpc_client
         .get_program_accounts_with_config(&program_id, config)
         .map_err(|e| anyhow!("RPC error Marginfi: {}", e))?;
