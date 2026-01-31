@@ -40,9 +40,9 @@ const TOKENS: Record<string, string> = {
   JitoSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
 };
 
-// Jupiter API (new v1 endpoint)
-const JUPITER_QUOTE_API = 'https://api.jup.ag/swap/v1/quote';
-const JUPITER_SWAP_API = 'https://api.jup.ag/swap/v1/swap-instructions';
+// Jupiter API (public v6 - no API key required)
+const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
+const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap-instructions';
 
 // Jito tip account
 const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
