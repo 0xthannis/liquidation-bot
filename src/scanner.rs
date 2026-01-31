@@ -467,14 +467,12 @@ impl PositionScanner {
                         continue;
                     }
                     
-                    let borrowed_amount = obligation.borrowed_amount_sf;
-                    let max_liquidatable = if borrowed_amount > 0 {
-                        let capped = std::cmp::min(borrowed_amount / 5, 100_000_000_000_000_000);
-                        std::cmp::max(capped as u64, 1_000_000)
-                    } else {
-                        let deposit_est = (obligation.deposited_value_sf / (1u128 << 40)) as u64;
-                        std::cmp::min(deposit_est / 10, 100_000_000_000)
-                    };
+                    // Scale factor for Kamino _sf values is 2^60
+                    let scale_factor = 1u128 << 60;
+                    let borrowed_usd = obligation.borrowed_assets_market_value_sf / scale_factor;
+                    let borrowed_sol = borrowed_usd / 200;
+                    let borrowed_lamports = borrowed_sol * 1_000_000_000;
+                    let max_liquidatable = std::cmp::min(borrowed_lamports / 5, 100_000_000_000) as u64;
                     
                     if max_liquidatable < 1_000_000 {
                         continue;
@@ -624,23 +622,25 @@ async fn scan_kamino_parallel(
                     continue;
                 }
                 
-                // Estimate debt value using the borrowed_amount_sf from the borrows array
-                // This is more reliable than the market value
-                let borrowed_amount = obligation.borrowed_amount_sf;
+                // Scale factor for Kamino _sf values is 2^60
+                let scale_factor = 1u128 << 60;
                 
-                // Estimate max liquidatable as 20% of borrowed amount (in token units)
-                // Convert to lamports estimate (assume 1:1 for simplicity, will be adjusted by liquidation)
-                let max_liquidatable = if borrowed_amount > 0 {
-                    // Cap at reasonable values
-                    let capped = std::cmp::min(borrowed_amount / 5, 100_000_000_000_000_000); // Max 100 SOL worth
-                    std::cmp::max(capped as u64, 1_000_000) // Min 0.001 SOL
-                } else {
-                    // Fallback: estimate from deposited value
-                    let deposit_est = (obligation.deposited_value_sf / (1u128 << 40)) as u64;
-                    std::cmp::min(deposit_est / 10, 100_000_000_000) // 10% of deposit, max 100 SOL
-                };
+                // Convert borrowed value to SOL estimate
+                // borrowed_assets_market_value_sf is in USD * 2^60, assume ~$200/SOL
+                let borrowed_usd = obligation.borrowed_assets_market_value_sf / scale_factor;
+                let borrowed_sol = borrowed_usd / 200; // Approximate SOL price
+                let borrowed_lamports = borrowed_sol * 1_000_000_000;
                 
-                // Skip tiny amounts
+                // Max liquidatable is 20% of debt (partial liquidation)
+                let max_liquidatable = std::cmp::min(borrowed_lamports / 5, 100_000_000_000) as u64; // Cap at 100 SOL
+                
+                // Debug first few to understand values
+                if liquidatable_count <= 5 {
+                    log::info!("  [DEBUG] {} max_liq calc: borrowed_usd={}, borrowed_sol={}, max_liq={}",
+                        pubkey, borrowed_usd, borrowed_sol, max_liquidatable);
+                }
+                
+                // Skip tiny amounts (< 0.001 SOL)
                 if max_liquidatable < 1_000_000 {
                     continue;
                 }
