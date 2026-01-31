@@ -183,8 +183,8 @@ impl BotConfig {
         if self.wallet_private_key.is_empty() {
             return Err(anyhow!("Wallet private key requis"));
         }
-        if self.poll_interval_seconds < 10 {
-            return Err(anyhow!("Poll interval minimum: 10 secondes"));
+        if self.poll_interval_seconds < 1 {
+            return Err(anyhow!("Poll interval minimum: 1 seconde"));
         }
         if self.max_slippage_percent > 10 {
             return Err(anyhow!("Slippage maximum: 10%"));
