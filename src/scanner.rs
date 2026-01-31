@@ -600,12 +600,21 @@ async fn scan_kamino_parallel(
             if obligation.is_liquidatable() {
                 liquidatable_count += 1;
                 
-                // Kamino _sf values are scaled by 2^60 (not 10^18)
-                // To get USD value: divide by 2^60 then multiply by decimals
-                // For lamports estimation: use the raw health ratio
                 let health = obligation.health_ratio();
                 
+                // Debug: log first few liquidatable accounts to understand the data
+                if liquidatable_count <= 3 {
+                    log::info!("  [DEBUG] Account {}: borrowed_sf={}, unhealthy_sf={}, deposited_sf={}, health={:.4}",
+                        pubkey,
+                        obligation.borrowed_assets_market_value_sf,
+                        obligation.unhealthy_borrow_value_sf,
+                        obligation.deposited_value_sf,
+                        health
+                    );
+                }
+                
                 // Only process accounts with reasonable health ratio (0 < health < 1)
+                // If health >= 1, the account is not actually liquidatable
                 if health <= 0.0 || health >= 1.0 {
                     continue;
                 }
