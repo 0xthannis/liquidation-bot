@@ -152,6 +152,7 @@ pub struct PriorityLevel {
 /// Réponse de swap Jupiter (transaction base64)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SwapResponse {
     pub swap_transaction: String,
     #[serde(default)]

@@ -20,6 +20,7 @@ use crate::jupiter::JupiterClient;
 
 /// DEXs supportés
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum Dex {
     Raydium,
     Orca,
@@ -38,6 +39,7 @@ impl std::fmt::Display for Dex {
 
 /// Pool de liquidité
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LiquidityPool {
     pub dex: Dex,
     pub address: Pubkey,
@@ -50,6 +52,7 @@ pub struct LiquidityPool {
 
 impl LiquidityPool {
     /// Calcule le prix token_a en termes de token_b
+    #[allow(dead_code)]
     pub fn price_a_to_b(&self) -> f64 {
         if self.reserve_a == 0 {
             return 0.0;
@@ -58,6 +61,7 @@ impl LiquidityPool {
     }
 
     /// Calcule le prix token_b en termes de token_a
+    #[allow(dead_code)]
     pub fn price_b_to_a(&self) -> f64 {
         if self.reserve_b == 0 {
             return 0.0;
@@ -89,6 +93,7 @@ impl LiquidityPool {
 
 /// Opportunité d'arbitrage
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ArbitrageOpportunity {
     pub token_in: Pubkey,
     pub token_out: Pubkey,
@@ -100,6 +105,7 @@ pub struct ArbitrageOpportunity {
 }
 
 /// Scanner d'arbitrage
+#[allow(dead_code)]
 pub struct ArbitrageScanner {
     rpc_client: RpcClient,
     config: BotConfig,
@@ -311,10 +317,10 @@ impl ArbitrageScanner {
     /// Trouve arbitrage triangulaire
     async fn find_triangle_arb(
         &self,
-        token_a: Pubkey,
-        token_b: Pubkey,
-        token_c: Pubkey,
-        amount: u64,
+        _token_a: Pubkey,
+        _token_b: Pubkey,
+        _token_c: Pubkey,
+        _amount: u64,
     ) -> Option<ArbitrageOpportunity> {
         // A -> B -> C -> A
         // Pour simplifier, on utilise Jupiter pour le routing
@@ -440,7 +446,7 @@ impl ArbitrageExecutor {
         let jupiter_tx_bytes = BASE64_STANDARD.decode(&swap_response.swap_transaction)
             .map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
 
-        let jupiter_tx: VersionedTransaction = bincode::deserialize(&jupiter_tx_bytes)
+        let _jupiter_tx: VersionedTransaction = bincode::deserialize(&jupiter_tx_bytes)
             .map_err(|e| anyhow!("Failed to deserialize transaction: {}", e))?;
 
         // Build flash loan transaction:
@@ -631,6 +637,7 @@ impl ArbitrageExecutor {
 
 /// Résultat d'arbitrage
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ArbitrageResult {
     pub success: bool,
     pub signature: Option<Signature>,

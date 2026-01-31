@@ -61,6 +61,7 @@ pub struct ProgramIds;
 
 impl ProgramIds {
     // Kamino Lending Program (klend) - MAINNET OFFICIEL
+    #[allow(dead_code)]
     pub fn kamino_lending() -> Pubkey {
         Pubkey::from_str("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD").unwrap()
     }
@@ -101,10 +102,12 @@ impl ProgramIds {
     }
     
     // Common token mints
+    #[allow(dead_code)]
     pub fn sol_mint() -> Pubkey {
         Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap()
     }
     
+    #[allow(dead_code)]
     pub fn usdc_mint() -> Pubkey {
         Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap()
     }

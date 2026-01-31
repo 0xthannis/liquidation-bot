@@ -1,8 +1,6 @@
 //! Bot de Liquidation Solana - Marginfi & Kamino
 //! Utilise Jupiter API pour les swaps
 
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;

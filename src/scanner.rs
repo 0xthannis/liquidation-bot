@@ -19,6 +19,7 @@ use crate::utils::{LiquidationOpportunity, MarginfiAccountHeader, RateLimiter, m
 /// Structure Obligation Kamino simplifiée (désérialisation manuelle)
 /// Basée sur: https://github.com/Kamino-Finance/klend/blob/main/programs/klend/src/state/obligation.rs
 #[derive(Debug)]
+#[allow(dead_code)]
 struct KaminoObligation {
     /// Discriminator (8 bytes)
     pub tag: u64,
@@ -161,7 +162,6 @@ impl PositionScanner {
         let mut join_set: JoinSet<Result<Vec<LiquidationOpportunity>>> = JoinSet::new();
         
         // Clone what we need for async tasks
-        let config_clone = self.config.clone();
         let rpc_url = self.config.get_rpc_url().to_string();
         let timeout_ms = self.config.rpc_timeout_ms;
         let batch_size = self.config.batch_size;

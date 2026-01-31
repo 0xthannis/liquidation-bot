@@ -9,6 +9,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 /// Représente une opportunité de liquidation détectée
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LiquidationOpportunity {
     pub protocol: String,
     pub account_address: Pubkey,
@@ -66,6 +67,7 @@ impl WrappedI80F48 {
         Decimal::from(int_part) / Decimal::from(1_000_000_000u64) // Normalisé
     }
     
+    #[allow(dead_code)]
     pub fn is_positive(&self) -> bool {
         self.to_decimal() > Decimal::ZERO
     }
@@ -73,6 +75,7 @@ impl WrappedI80F48 {
 
 /// Structure Bank Marginfi (info sur une réserve)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BankInfo {
     pub address: Pubkey,
     pub mint: Pubkey,
@@ -84,6 +87,7 @@ pub struct BankInfo {
 
 /// Statistiques du bot
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct BotStats {
     pub total_scans: u64,
     pub opportunities_found: u64,
@@ -138,6 +142,7 @@ pub mod math {
     use rust_decimal::Decimal;
 
     /// Health factor = weighted_assets / weighted_liabilities
+    #[allow(dead_code)]
     pub fn calculate_health_factor(
         asset_value: Decimal,
         asset_weight: Decimal, // ex: 0.85 pour 85%
@@ -155,6 +160,7 @@ pub mod math {
     }
 
     /// Position liquidable si health < 1
+    #[allow(dead_code)]
     pub fn is_liquidatable(health: Decimal) -> bool {
         health < Decimal::ONE
     }
@@ -211,6 +217,7 @@ impl RateLimiter {
 }
 
 /// Retry avec backoff exponentiel
+#[allow(dead_code)]
 pub async fn retry_with_backoff<T, F, Fut>(
     mut operation: F,
     max_retries: u32,
