@@ -23,6 +23,7 @@ import {
 } from '@solana/spl-token';
 import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } from '@kamino-finance/klend-sdk';
 import bs58 from 'bs58';
+import fetch from 'node-fetch';
 import 'dotenv/config';
 
 // ============== CONFIGURATION ==============
