@@ -263,8 +263,10 @@ async function executeFlashLoanArbitrage(
     return null;
   }
   
-  // 3. Get swap instructions from Jupiter
+  // 3. Get swap instructions from Jupiter (with rate limit delays)
+  await new Promise(r => setTimeout(r, 1100)); // Wait for rate limit
   const swapIx1 = await getJupiterSwapInstructions(quoteForward, keypair.publicKey);
+  await new Promise(r => setTimeout(r, 1100)); // Wait for rate limit
   const swapIx2 = await getJupiterSwapInstructions(quoteReturn, keypair.publicKey);
   
   if (!swapIx1 || !swapIx2) {
