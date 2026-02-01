@@ -39,11 +39,15 @@ const TOKENS: Record<string, string> = {
   USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
 };
 
-// DEX labels for Jupiter
-const DEX_LABELS = {
-  raydium: 'Raydium,Raydium+CLMM,Raydium+CPMM',
-  orca: 'Orca,Orca+V2,Orca+Whirlpool',
+// DEX labels for Jupiter API filtering
+const DEX_LABELS: Record<string, string> = {
+  raydium: 'Raydium,Raydium CLMM,Raydium CP',
+  orca: 'Orca,Orca V2,Whirlpool',
+  pumpswap: 'Pump.fun,PumpSwap',
 };
+
+// PumpSwap AMM Program ID
+const PUMPSWAP_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
 
 interface SwapInstructions {
   setupInstructions: any[];
@@ -84,20 +88,22 @@ export class CrossDexExecutor {
       return false;
     }
 
-    const { pair, direction, spreadPercent, potentialProfitUsd, swapAmountUsd } = opportunity;
+    const { pair, dex1, dex2, direction, spreadPercent, potentialProfitUsd, swapAmountUsd } = opportunity;
     
     console.log(`\n🔄 Executing Cross-DEX Arbitrage:`);
     console.log(`   Wallet: ${(walletBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
     console.log(`   Pair: ${pair}`);
+    console.log(`   DEXes: ${dex1} ↔ ${dex2}`);
     console.log(`   Direction: ${direction}`);
     console.log(`   Spread: ${spreadPercent.toFixed(3)}%`);
     console.log(`   Swap Amount: $${swapAmountUsd.toLocaleString()}`);
     console.log(`   Potential Profit: $${potentialProfitUsd.toFixed(2)}`);
 
     try {
-      // Determine DEX order based on direction
-      const buyDex = direction === 'raydium_to_orca' ? 'raydium' : 'orca';
-      const sellDex = direction === 'raydium_to_orca' ? 'orca' : 'raydium';
+      // Determine DEX order based on direction (buy on cheaper, sell on more expensive)
+      const [buyDex, sellDex] = direction.includes('_to_') 
+        ? direction.split('_to_') 
+        : [dex1, dex2];
 
       // Get USDC reserve
       const usdcMint = new PublicKey(TOKENS.USDC);
@@ -207,7 +213,7 @@ export class CrossDexExecutor {
     inputMint: string,
     outputMint: string,
     amount: bigint,
-    dex: 'raydium' | 'orca'
+    dex: string // 'raydium', 'orca', or 'pumpswap'
   ): Promise<any> {
     try {
       const dexFilter = DEX_LABELS[dex];

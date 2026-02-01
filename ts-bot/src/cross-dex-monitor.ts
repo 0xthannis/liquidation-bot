@@ -11,8 +11,12 @@ import {
 } from '@solana/web3.js';
 import { recordTrade, botStats } from './api-server';
 
-// Raydium AMM Program ID
-const RAYDIUM_AMM_PROGRAM = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
+// DEX Program IDs
+const DEX_PROGRAMS = {
+  raydium: new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8'),
+  pumpswap: new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'),
+  orca: new PublicKey('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc'), // Whirlpool
+};
 
 // Pool addresses
 const POOLS = {
@@ -23,6 +27,13 @@ const POOLS = {
     tokenB: 'USDC',
   },
 };
+
+// DEX pairs for cross-DEX arbitrage
+const DEX_PAIRS = [
+  { dex1: 'raydium', dex2: 'orca', name: 'Raydium ↔ Orca' },
+  { dex1: 'raydium', dex2: 'pumpswap', name: 'Raydium ↔ PumpSwap' },
+  { dex1: 'orca', dex2: 'pumpswap', name: 'Orca ↔ PumpSwap' },
+];
 
 // Token mints
 const TOKENS = {
@@ -68,11 +79,13 @@ export type OpportunityCallback = (opportunity: CrossDexOpportunity) => Promise<
 
 export interface CrossDexOpportunity {
   pair: string;
-  raydiumPrice: number;
-  orcaPrice: number;
+  dex1: string;
+  dex2: string;
+  dex1Price: number;
+  dex2Price: number;
   spreadPercent: number;
   potentialProfitUsd: number;
-  direction: 'raydium_to_orca' | 'orca_to_raydium';
+  direction: string; // e.g., 'raydium_to_orca', 'pumpswap_to_raydium', etc.
   timestamp: number;
   swapAmountUsd: number;
 }
@@ -114,15 +127,19 @@ export class CrossDexMonitor {
     }
 
     console.log('\n🔗 Starting Cross-DEX Monitor (Event-Based)');
-    console.log(`📡 Listening to Raydium Program: ${RAYDIUM_AMM_PROGRAM.toString().slice(0, 8)}...`);
+    console.log(`📡 Listening to DEX Programs:`);
+    console.log(`   - Raydium: ${DEX_PROGRAMS.raydium.toString().slice(0, 8)}...`);
+    console.log(`   - PumpSwap: ${DEX_PROGRAMS.pumpswap.toString().slice(0, 8)}...`);
+    console.log(`   - Orca: ${DEX_PROGRAMS.orca.toString().slice(0, 8)}...`);
     console.log(`💰 Min swap size: $${this.minSwapUsd.toLocaleString()}`);
-    console.log(`📊 Min spread: ${this.minSpreadPercent}%\n`);
+    console.log(`📊 Min spread: ${this.minSpreadPercent}%`);
+    console.log(`🔀 DEX Pairs: ${DEX_PAIRS.map(p => p.name).join(', ')}\n`);
 
     this.isRunning = true;
 
-    // Subscribe to Raydium program logs
+    // Subscribe to Raydium program logs (main liquidity source)
     this.subscriptionId = this.connection.onLogs(
-      RAYDIUM_AMM_PROGRAM,
+      DEX_PROGRAMS.raydium,
       async (logs: Logs) => {
         await this.handleRaydiumLogs(logs);
       },
@@ -254,8 +271,10 @@ export class CrossDexMonitor {
 
       const opportunity: CrossDexOpportunity = {
         pair,
-        raydiumPrice,
-        orcaPrice,
+        dex1: 'raydium',
+        dex2: 'orca',
+        dex1Price: raydiumPrice,
+        dex2Price: orcaPrice,
         spreadPercent,
         potentialProfitUsd,
         direction,
