@@ -323,18 +323,31 @@ export async function calculateWhirlpoolSwapOutput(
   try {
     const pool = POOLS.orca;
     const whirlpoolAccount = await connection.getAccountInfo(pool.poolId);
-    if (!whirlpoolAccount) return null;
+    if (!whirlpoolAccount) {
+      console.error('Whirlpool account not found');
+      return null;
+    }
 
-    // Read Whirlpool state
-    // Offset 65: sqrtPrice (u128 = 16 bytes)
-    // Offset 81: liquidity (u128 = 16 bytes)
+    // Whirlpool account layout (from Orca SDK):
+    // 8 bytes: discriminator
+    // 32 bytes: whirlpools_config
+    // 1 byte: whirlpool_bump
+    // 2 bytes: tick_spacing
+    // 2 bytes: tick_spacing_seed
+    // 2 bytes: fee_rate
+    // 2 bytes: protocol_fee_rate
+    // 16 bytes: liquidity (u128)
+    // 16 bytes: sqrt_price (u128)
+    // Total offset to sqrt_price: 8+32+1+2+2+2+2+16 = 65
+    // Total offset to liquidity: 8+32+1+2+2+2+2 = 49
+    
+    const liquidityLow = whirlpoolAccount.data.readBigUInt64LE(49);
+    const liquidityHigh = whirlpoolAccount.data.readBigUInt64LE(57);
+    const liquidity = liquidityLow + (liquidityHigh << 64n);
+    
     const sqrtPriceLow = whirlpoolAccount.data.readBigUInt64LE(65);
     const sqrtPriceHigh = whirlpoolAccount.data.readBigUInt64LE(73);
     const sqrtPriceX64 = sqrtPriceLow + (sqrtPriceHigh << 64n);
-    
-    const liquidityLow = whirlpoolAccount.data.readBigUInt64LE(81);
-    const liquidityHigh = whirlpoolAccount.data.readBigUInt64LE(89);
-    const liquidity = liquidityLow + (liquidityHigh << 64n);
 
     // Fee rate: 0.3% for this pool (30 basis points)
     const feeRate = 30n; // basis points
@@ -377,8 +390,14 @@ export async function calculateWhirlpoolSwapOutput(
       // Adjust for decimals: SOL output is in 9 decimals
     }
 
+    // Debug: show calculation
+    // console.log(`   🔍 Whirlpool: L=${liquidityFloat.toExponential(2)}, sqrtP=${sqrtPriceFloat.toFixed(6)}, in=${amountInFloat}, out=${amountOut.toFixed(0)}`);
+
     // Return as bigint
-    if (amountOut <= 0) return null;
+    if (amountOut <= 0 || !isFinite(amountOut)) {
+      console.error(`Whirlpool calc invalid: out=${amountOut}, L=${liquidity}, sqrtP=${sqrtPriceX64}`);
+      return null;
+    }
     return BigInt(Math.floor(amountOut));
   } catch (error) {
     console.error('Error calculating Whirlpool swap:', error);
