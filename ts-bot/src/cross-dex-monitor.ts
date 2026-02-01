@@ -11,6 +11,7 @@ import {
 } from '@solana/web3.js';
 import { recordTrade, botStats } from './api-server';
 import { getPoolPrice } from './amm-swap';
+import { discoverNewTokens, getDiscoveredTokens, DiscoveredToken } from './new-token-discovery';
 
 // DEX Program IDs
 const DEX_PROGRAMS = {
@@ -50,12 +51,15 @@ const TOKENS = {
   BONK: new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
 };
 
-// Trading pairs to monitor
-const TRADING_PAIRS = [
-  { name: 'SOL/USDC', tokenA: 'SOL', tokenB: 'USDC', decimalsA: 9, decimalsB: 6 },
-  { name: 'JUP/SOL', tokenA: 'JUP', tokenB: 'SOL', decimalsA: 6, decimalsB: 9 },
-  { name: 'BONK/SOL', tokenA: 'BONK', tokenB: 'SOL', decimalsA: 5, decimalsB: 9 },
+// Static trading pairs to monitor
+const STATIC_TRADING_PAIRS = [
+  { name: 'SOL/USDC', tokenA: 'SOL', tokenB: 'USDC', decimalsA: 9, decimalsB: 6, mintA: 'So11111111111111111111111111111111111111112', mintB: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+  { name: 'JUP/SOL', tokenA: 'JUP', tokenB: 'SOL', decimalsA: 6, decimalsB: 9, mintA: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', mintB: 'So11111111111111111111111111111111111111112' },
+  { name: 'BONK/SOL', tokenA: 'BONK', tokenB: 'SOL', decimalsA: 5, decimalsB: 9, mintA: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', mintB: 'So11111111111111111111111111111111111111112' },
 ];
+
+// Dynamic trading pairs (static + discovered)
+let TRADING_PAIRS = [...STATIC_TRADING_PAIRS];
 
 // Cross-DEX specific stats
 export interface CrossDexStats {
@@ -136,6 +140,43 @@ export class CrossDexMonitor {
     this.onOpportunity = callback;
   }
 
+  /**
+   * Refresh trading pairs by discovering new tokens
+   */
+  private async refreshTradingPairs(): Promise<void> {
+    try {
+      const discoveredTokens = await discoverNewTokens();
+      
+      // Start with static pairs
+      TRADING_PAIRS = [...STATIC_TRADING_PAIRS];
+      
+      // Add discovered tokens as trading pairs
+      for (const token of discoveredTokens) {
+        const pairName = `${token.symbol}/SOL`;
+        
+        // Skip if already exists
+        if (TRADING_PAIRS.some(p => p.name === pairName)) continue;
+        
+        // Add dynamic token to TOKENS map
+        (TOKENS as any)[token.symbol] = new PublicKey(token.mint);
+        
+        TRADING_PAIRS.push({
+          name: pairName,
+          tokenA: token.symbol,
+          tokenB: 'SOL',
+          decimalsA: token.decimals,
+          decimalsB: 9,
+          mintA: token.mint,
+          mintB: 'So11111111111111111111111111111111111111112',
+        });
+      }
+      
+      console.log(`📊 Monitoring ${TRADING_PAIRS.length} pairs (${STATIC_TRADING_PAIRS.length} static + ${discoveredTokens.length} discovered)`);
+    } catch (error) {
+      console.error('Error refreshing trading pairs:', error);
+    }
+  }
+
   async start(): Promise<void> {
     if (this.isRunning) {
       console.log('⚠️ Cross-DEX Monitor already running');
@@ -143,15 +184,22 @@ export class CrossDexMonitor {
     }
 
     console.log('\n🔗 Starting Cross-DEX Monitor (Event-Based)');
+    
+    // Discover new tokens on startup
+    await this.refreshTradingPairs();
+    
     console.log(`📡 Listening to DEX Programs:`);
     console.log(`   - Raydium: ${DEX_PROGRAMS.raydium.toString().slice(0, 8)}...`);
     console.log(`   - PumpSwap: ${DEX_PROGRAMS.pumpswap.toString().slice(0, 8)}...`);
     console.log(`   - Orca: ${DEX_PROGRAMS.orca.toString().slice(0, 8)}...`);
     console.log(`💰 Min swap size: $${this.minSwapUsd.toLocaleString()}`);
     console.log(`📊 Min spread: ${this.minSpreadPercent}%`);
-    console.log(`🔀 DEX Pairs: ${DEX_PAIRS.map(p => p.name).join(', ')}\n`);
+    console.log(`🔀 Trading Pairs: ${TRADING_PAIRS.map(p => p.name).join(', ')}\n`);
 
     this.isRunning = true;
+    
+    // Refresh discovered tokens every 5 minutes
+    setInterval(() => this.refreshTradingPairs(), 5 * 60 * 1000);
 
     // Subscribe to Raydium program logs
     this.subscriptionId = this.connection.onLogs(
@@ -470,12 +518,13 @@ export class CrossDexMonitor {
 
   private async fetchPrice(tokenA: string, tokenB: string): Promise<number | null> {
     try {
-      // Find pair config for decimals
+      // Find pair config for decimals and mints
       const pairConfig = TRADING_PAIRS.find(p => p.tokenA === tokenA && p.tokenB === tokenB);
       if (!pairConfig) return null;
       
-      const inputMint = TOKENS[tokenA as keyof typeof TOKENS].toString();
-      const outputMint = TOKENS[tokenB as keyof typeof TOKENS].toString();
+      // Use mintA/mintB from pair config (supports dynamic tokens)
+      const inputMint = pairConfig.mintA;
+      const outputMint = pairConfig.mintB;
       const inputDecimals = pairConfig.decimalsA;
       const outputDecimals = pairConfig.decimalsB;
       const amount = Math.pow(10, inputDecimals); // 1 unit of tokenA
