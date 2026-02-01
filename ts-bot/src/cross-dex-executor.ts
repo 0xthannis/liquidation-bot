@@ -103,11 +103,11 @@ export class CrossDexExecutor {
       // Flash loans are FREE capital from Kamino - we don't need our own money!
       // The only cost is: Kamino fee (0.001%) + Jito tip + priority fees
       // 
-      // MAXIMIZE PROFIT: Borrow as much as possible!
-      // Limit: Kamino USDC reserve liquidity (~$50M available)
-      // But also consider slippage - larger amounts = more slippage
-      // Sweet spot: $50k-$500k depending on pool depth
-      const flashAmountUsd = Math.min(500000, Math.max(50000, swapAmountUsd * 0.5));
+      // MAXIMIZE PROFIT: Borrow MILLIONS!
+      // Kamino USDC reserve has ~$50M+ liquidity
+      // Only limit is DEX pool depth (to avoid excessive slippage)
+      // For SOL/USDC pools: Raydium ~$100M, Orca ~$80M liquidity
+      const flashAmountUsd = Math.min(5_000_000, Math.max(100_000, swapAmountUsd * 0.8));
       const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000)); // USDC has 6 decimals
 
       console.log(`   Flash Loan: $${flashAmountUsd.toLocaleString()} USDC`);
