@@ -648,21 +648,21 @@ async function main() {
     priority: PriorityLevel;
   }
 
-  // RESTORED ORIGINAL CONFIG - These amounts were working before!
+  // AGGRESSIVE CONFIG - Bigger amounts = Bigger profits potential
+  // Kamino has ~$50-100M USDC liquidity, no reason to limit ourselves
   const arbConfigs: ArbConfig[] = [
-    // ============ ORIGINAL PAIRS THAT WORKED - HIGH PRIORITY ============
-    // EXACTLY as before - USDC flash loans up to 1M
-    { flash: 'USDC', swap: 'SOL', amounts: [10000n, 50000n, 100000n, 500000n, 1000000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'USDT', amounts: [10000n, 100000n, 500000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'JitoSOL', amounts: [10000n, 50000n, 100000n], priority: 'HIGH' },
-    // EXACTLY as before - SOL flash loans up to 1000 SOL  
-    { flash: 'SOL', swap: 'USDC', amounts: [10n, 50n, 100n, 500n, 1000n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'JitoSOL', amounts: [10n, 100n, 500n], priority: 'HIGH' },
+    // USDC flash loans - GO BIG! Up to 10M USDC
+    { flash: 'USDC', swap: 'SOL', amounts: [100000n, 500000n, 1000000n, 5000000n, 10000000n], priority: 'HIGH' },
+    { flash: 'USDC', swap: 'USDT', amounts: [500000n, 1000000n, 5000000n, 10000000n], priority: 'HIGH' },
+    { flash: 'USDC', swap: 'JitoSOL', amounts: [100000n, 500000n, 1000000n, 5000000n], priority: 'HIGH' },
+    // SOL flash loans - Up to 10K SOL (~$2M)
+    { flash: 'SOL', swap: 'USDC', amounts: [100n, 500n, 1000n, 5000n, 10000n], priority: 'HIGH' },
+    { flash: 'SOL', swap: 'JitoSOL', amounts: [100n, 500n, 1000n, 5000n], priority: 'HIGH' },
   ];
 
-  console.log('🔍 Starting arbitrage scanner - ORIGINAL CONFIG RESTORED!\n');
+  console.log('🔍 Starting AGGRESSIVE arbitrage scanner!\n');
   console.log(`📊 ${arbConfigs.length} pairs: USDC<->SOL, USDC<->USDT, USDC<->JitoSOL, SOL<->USDC, SOL<->JitoSOL`);
-  console.log('Amounts: 10K to 1M USDC | 10 to 1000 SOL\n');
+  console.log('Amounts: 100K to 10M USDC | 100 to 10K SOL\n');
   
   let scanCount = 0;
   
