@@ -99,20 +99,6 @@ export class CrossDexExecutor {
       const buyDex = direction === 'raydium_to_orca' ? 'raydium' : 'orca';
       const sellDex = direction === 'raydium_to_orca' ? 'orca' : 'raydium';
 
-      // Calculate flash loan amount (in USDC micro-units)
-      // Flash loans are FREE capital from Kamino - we don't need our own money!
-      // The only cost is: Kamino fee (0.001%) + Jito tip + priority fees
-      // 
-      // MAXIMIZE PROFIT: Borrow MILLIONS!
-      // Kamino USDC reserve has ~$50M+ liquidity
-      // Only limit is DEX pool depth (to avoid excessive slippage)
-      // For SOL/USDC pools: Raydium ~$100M, Orca ~$80M liquidity
-      const flashAmountUsd = Math.min(5_000_000, Math.max(100_000, swapAmountUsd * 0.8));
-      const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000)); // USDC has 6 decimals
-
-      console.log(`   Flash Loan: $${flashAmountUsd.toLocaleString()} USDC`);
-      console.log(`   Buy on: ${buyDex} -> Sell on: ${sellDex}`);
-
       // Get USDC reserve
       const usdcMint = new PublicKey(TOKENS.USDC);
       const reserve = this.market.getReserveByMint(usdcMint);
@@ -121,64 +107,68 @@ export class CrossDexExecutor {
         return false;
       }
 
-      // Get quotes from both DEXes
-      const quote1 = await this.getQuoteFromDex(
-        TOKENS.USDC,
-        TOKENS.SOL,
-        flashAmount,
-        buyDex
-      );
+      // DYNAMIC OPTIMAL AMOUNT: Test multiple amounts and pick the most profitable
+      console.log(`   🔍 Finding optimal flash loan amount...`);
+      console.log(`   Buy on: ${buyDex} -> Sell on: ${sellDex}`);
+      
+      const testAmounts = [10_000, 50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000];
+      let bestAmount = 0;
+      let bestProfit = 0;
+      let bestQuote1: any = null;
+      let bestQuote2: any = null;
 
-      if (!quote1) {
-        console.log(`   ❌ No quote from ${buyDex}`);
-        return false;
+      for (const amountUsd of testAmounts) {
+        const amount = BigInt(Math.floor(amountUsd * 1_000_000));
+        
+        // Get quote 1: USDC -> SOL
+        const q1 = await this.getQuoteFromDex(TOKENS.USDC, TOKENS.SOL, amount, buyDex);
+        if (!q1) continue;
+        
+        const solAmount = BigInt(q1.outAmount);
+        
+        // Get quote 2: SOL -> USDC
+        const q2 = await this.getQuoteFromDex(TOKENS.SOL, TOKENS.USDC, solAmount, sellDex);
+        if (!q2) continue;
+        
+        const returned = BigInt(q2.outAmount);
+        const fee = amount * 1n / 100000n; // 0.001% Kamino fee
+        const profit = Number(returned - amount - fee) / 1_000_000;
+        
+        console.log(`   💰 $${amountUsd.toLocaleString()} → profit: $${profit.toFixed(2)}`);
+        
+        if (profit > bestProfit) {
+          bestProfit = profit;
+          bestAmount = amountUsd;
+          bestQuote1 = q1;
+          bestQuote2 = q2;
+        }
       }
 
-      const solAmount = BigInt(quote1.outAmount);
-      console.log(`   Quote 1 (${buyDex}): ${flashAmountUsd} USDC -> ${Number(solAmount) / LAMPORTS_PER_SOL} SOL`);
-
-      const quote2 = await this.getQuoteFromDex(
-        TOKENS.SOL,
-        TOKENS.USDC,
-        solAmount,
-        sellDex
-      );
-
-      if (!quote2) {
-        console.log(`   ❌ No quote from ${sellDex}`);
-        return false;
-      }
-
-      const returnedUsdc = BigInt(quote2.outAmount);
-      const flashLoanFee = flashAmount * 1n / 100000n; // 0.001% Kamino fee
-      const totalToRepay = flashAmount + flashLoanFee;
-      const profit = returnedUsdc - totalToRepay;
-      const profitUsd = Number(profit) / 1_000_000;
-
-      console.log(`   Quote 2 (${sellDex}): ${Number(solAmount) / LAMPORTS_PER_SOL} SOL -> ${Number(returnedUsdc) / 1_000_000} USDC`);
-      console.log(`   Flash loan + fee: ${Number(totalToRepay) / 1_000_000} USDC`);
-      console.log(`   Net profit: $${profitUsd.toFixed(2)}`);
-
-      // Check profitability - execute if ANY profit (even $0.10)
-      // Flash loan is FREE so any profit > fees is worth it!
-      if (profitUsd < 0.10) {
-        console.log('   ❌ Not profitable (need > $0.10)');
+      if (bestProfit < 0.10 || !bestQuote1 || !bestQuote2) {
+        console.log('   ❌ No profitable amount found');
         crossDexStats.missedReasons.spreadTooLow++;
         recordTrade({
           pair,
           type: 'cross_dex',
-          amount: flashAmountUsd,
-          profit: profitUsd,
-          profitUsd,
+          amount: 0,
+          profit: bestProfit,
+          profitUsd: bestProfit,
           status: 'not_profitable',
-          details: `Spread too low: ${spreadPercent.toFixed(3)}%`,
+          details: `Best profit: $${bestProfit.toFixed(2)}`,
         });
         return false;
       }
 
-      // Get swap instructions
-      const swapIx1 = await this.getSwapInstructions(quote1);
-      const swapIx2 = await this.getSwapInstructions(quote2);
+      // Use the best amount found
+      const flashAmountUsd = bestAmount;
+      const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000));
+      const profitUsd = bestProfit;
+
+      console.log(`   ✅ OPTIMAL: $${flashAmountUsd.toLocaleString()} → profit: $${profitUsd.toFixed(2)}`);
+
+      // Get swap instructions with optimal quotes
+      const swapIx1 = await this.getSwapInstructions(bestQuote1);
+      const swapIx2 = await this.getSwapInstructions(bestQuote2);
 
       if (!swapIx1 || !swapIx2) {
         console.log('   ❌ Failed to get swap instructions');
