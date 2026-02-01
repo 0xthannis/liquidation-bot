@@ -577,6 +577,8 @@ export class CrossDexExecutor {
       for (const ix of swapIx1.setupInstructions || []) {
         instructions.push(this.deserializeInstruction(ix));
       }
+      // Debug: log swapInstruction structure
+      console.log(`   🔍 swapInstruction keys: ${Object.keys(swapIx1.swapInstruction || {}).join(', ')}`);
       instructions.push(this.deserializeInstruction(swapIx1.swapInstruction));
       if (swapIx1.cleanupInstruction) {
         instructions.push(this.deserializeInstruction(swapIx1.cleanupInstruction));
@@ -584,6 +586,7 @@ export class CrossDexExecutor {
       console.log(`   ✅ Swap 1 added`);
     } catch (swap1Error: any) {
       console.log(`   ❌ Swap 1 failed: ${swap1Error.message}`);
+      console.log(`   🔍 Full swapIx1: ${JSON.stringify(Object.keys(swapIx1 || {}))}`);
       throw swap1Error;
     }
 
