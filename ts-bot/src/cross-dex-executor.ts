@@ -157,16 +157,16 @@ export class CrossDexExecutor {
       }
 
       if (bestProfit < 0.10 || !bestQuote1 || !bestQuote2) {
-        console.log('   ❌ No profitable amount found');
+        console.log(`   ❌ No profitable amount found (best: $${bestProfit.toFixed(2)}, need >$0.10)`);
         crossDexStats.missedReasons.spreadTooLow++;
         recordTrade({
           pair,
           type: 'cross_dex',
-          amount: 0,
+          amount: bestAmount,
           profit: bestProfit,
           profitUsd: bestProfit,
-          status: 'not_profitable',
-          details: `Best profit: $${bestProfit.toFixed(2)}`,
+          status: 'opportunity_detected', // Spread was good, but real profit after slippage too low
+          details: `${buyDex} → ${sellDex}: Spread ${spreadPercent.toFixed(3)}% but real profit $${bestProfit.toFixed(2)} after slippage`,
         });
         return false;
       }
