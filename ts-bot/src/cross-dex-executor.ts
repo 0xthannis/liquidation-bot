@@ -554,35 +554,53 @@ export class CrossDexExecutor {
     }));
 
     // Ensure ATAs exist (with retry for rate limiting)
+    console.log(`   📝 Step 1: Checking ATAs...`);
     try {
       await this.ensureAta(instructions, usdcMint);
       await this.ensureAta(instructions, solMint);
+      console.log(`   ✅ ATAs checked`);
     } catch (ataError) {
       console.log(`   ⚠️ ATA check failed, continuing: ${ataError}`);
     }
 
     // Record flash borrow index
     const flashBorrowIndex = instructions.length;
+    console.log(`   📝 Step 2: Adding flash borrow at index ${flashBorrowIndex}...`);
 
     // FLASH BORROW
     instructions.push(flashBorrowIxn);
+    console.log(`   ✅ Flash borrow added`);
 
     // SWAP 1: USDC -> SOL (buy on cheaper DEX)
-    for (const ix of swapIx1.setupInstructions || []) {
-      instructions.push(this.deserializeInstruction(ix));
-    }
-    instructions.push(this.deserializeInstruction(swapIx1.swapInstruction));
-    if (swapIx1.cleanupInstruction) {
-      instructions.push(this.deserializeInstruction(swapIx1.cleanupInstruction));
+    console.log(`   📝 Step 3: Adding swap 1 (${swapIx1.setupInstructions?.length || 0} setup, 1 swap)...`);
+    try {
+      for (const ix of swapIx1.setupInstructions || []) {
+        instructions.push(this.deserializeInstruction(ix));
+      }
+      instructions.push(this.deserializeInstruction(swapIx1.swapInstruction));
+      if (swapIx1.cleanupInstruction) {
+        instructions.push(this.deserializeInstruction(swapIx1.cleanupInstruction));
+      }
+      console.log(`   ✅ Swap 1 added`);
+    } catch (swap1Error: any) {
+      console.log(`   ❌ Swap 1 failed: ${swap1Error.message}`);
+      throw swap1Error;
     }
 
     // SWAP 2: SOL -> USDC (sell on more expensive DEX)
-    for (const ix of swapIx2.setupInstructions || []) {
-      instructions.push(this.deserializeInstruction(ix));
-    }
-    instructions.push(this.deserializeInstruction(swapIx2.swapInstruction));
-    if (swapIx2.cleanupInstruction) {
-      instructions.push(this.deserializeInstruction(swapIx2.cleanupInstruction));
+    console.log(`   📝 Step 4: Adding swap 2 (${swapIx2.setupInstructions?.length || 0} setup, 1 swap)...`);
+    try {
+      for (const ix of swapIx2.setupInstructions || []) {
+        instructions.push(this.deserializeInstruction(ix));
+      }
+      instructions.push(this.deserializeInstruction(swapIx2.swapInstruction));
+      if (swapIx2.cleanupInstruction) {
+        instructions.push(this.deserializeInstruction(swapIx2.cleanupInstruction));
+      }
+      console.log(`   ✅ Swap 2 added`);
+    } catch (swap2Error: any) {
+      console.log(`   ❌ Swap 2 failed: ${swap2Error.message}`);
+      throw swap2Error;
     }
 
     // FLASH REPAY with correct borrow index
