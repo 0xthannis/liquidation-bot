@@ -1,12 +1,12 @@
 /**
- * Kamino Liquidation Bot
+ * Kamino Liquidation Bot v2.0
  * 
- * Monitors unhealthy obligations on Kamino Lending and executes liquidations
- * for profit when positions become undercollateralized.
+ * Monitors unhealthy obligations on Kamino Lending and executes liquidations.
+ * Uses the official klend-sdk for proper transaction building.
  */
 
-import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, sendAndConfirmTransaction, SystemProgram } from '@solana/web3.js';
-import { KaminoMarket, KaminoObligation, KaminoReserve } from '@kamino-finance/klend-sdk';
+import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, sendAndConfirmTransaction, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js';
+import { KaminoMarket, KaminoObligation, KaminoReserve, KaminoAction, PROGRAM_ID, VanillaObligation } from '@kamino-finance/klend-sdk';
 import Decimal from 'decimal.js';
 
 // SPL Token constants
@@ -38,9 +38,9 @@ function createAtaInstruction(payer: PublicKey, ata: PublicKey, owner: PublicKey
   });
 }
 
-// Kamino Main Market
+// Kamino Main Market - CORRECT ADDRESSES
 const KAMINO_MAIN_MARKET = new PublicKey('7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
-const KAMINO_PROGRAM_ID = new PublicKey('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD');
+// Use SDK's PROGRAM_ID which is correct: KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
 
 // Configuration
 const CONFIG = {
@@ -82,7 +82,7 @@ export class LiquidationBot {
       this.connection,
       KAMINO_MAIN_MARKET,
       undefined as any,
-      KAMINO_PROGRAM_ID
+      PROGRAM_ID
     );
 
     if (!this.market) {
@@ -188,39 +188,59 @@ export class LiquidationBot {
     if (!this.market) return [];
 
     try {
-      // Use getProgramAccounts to find all obligations
-      const obligationAccounts = await this.connection.getProgramAccounts(
-        KAMINO_PROGRAM_ID,
-        {
-          filters: [
-            { dataSize: 1300 }, // Approximate size of obligation account
-            {
-              memcmp: {
-                offset: 32, // Market pubkey offset
-                bytes: KAMINO_MAIN_MARKET.toBase58(),
-              },
-            },
-          ],
-        }
+      // Use SDK's method to get all obligations for the market
+      // This is more reliable than manual getProgramAccounts
+      const allObligations = await this.market.getAllObligationsForMarket();
+      
+      // Filter to only get obligations with borrows (potential liquidation targets)
+      const obligationsWithBorrows = allObligations.filter(obl => 
+        obl && obl.borrows && obl.borrows.size > 0
       );
 
-      const obligations: KaminoObligation[] = [];
-
-      for (const account of obligationAccounts.slice(0, 100)) { // Limit to first 100 for performance
-        try {
-          const obligation = await this.market!.getObligationByAddress(account.pubkey);
-          if (obligation) {
-            obligations.push(obligation);
-          }
-        } catch {
-          // Skip invalid obligations
-        }
-      }
-
-      return obligations;
+      console.log(`   Found ${obligationsWithBorrows.length} obligations with active borrows`);
+      
+      return obligationsWithBorrows;
     } catch (error) {
       console.error('Error fetching obligations:', error);
-      return [];
+      
+      // Fallback: try getProgramAccounts without dataSize filter
+      try {
+        console.log('   Trying fallback method...');
+        const obligationAccounts = await this.connection.getProgramAccounts(
+          PROGRAM_ID,
+          {
+            filters: [
+              {
+                memcmp: {
+                  offset: 8, // After discriminator
+                  bytes: KAMINO_MAIN_MARKET.toBase58(),
+                },
+              },
+            ],
+          }
+        );
+
+        const obligations: KaminoObligation[] = [];
+        const batchSize = 50;
+        
+        for (let i = 0; i < Math.min(obligationAccounts.length, 500); i += batchSize) {
+          const batch = obligationAccounts.slice(i, i + batchSize);
+          const results = await Promise.allSettled(
+            batch.map(acc => this.market!.getObligationByAddress(acc.pubkey))
+          );
+          
+          for (const result of results) {
+            if (result.status === 'fulfilled' && result.value && result.value.borrows.size > 0) {
+              obligations.push(result.value);
+            }
+          }
+        }
+        
+        return obligations;
+      } catch (fallbackError) {
+        console.error('Fallback also failed:', fallbackError);
+        return [];
+      }
     }
   }
 
@@ -308,31 +328,40 @@ export class LiquidationBot {
       console.log(`   Repay: ${healthInfo.repayReserve.symbol}`);
       console.log(`   Withdraw: ${healthInfo.withdrawReserve.symbol}`);
 
-      // Calculate liquidation amount (50% of debt or max allowed)
+      // Calculate liquidation amount (50% of debt - protocol max)
       const repayAmount = healthInfo.maxRepayAmount.div(2);
-      const repayAmountLamports = repayAmount.mul(new Decimal(10).pow(healthInfo.repayReserve.stats.decimals)).floor();
+      const decimals = healthInfo.repayReserve.stats.decimals;
+      const repayAmountLamports = repayAmount.mul(new Decimal(10).pow(decimals)).floor();
 
-      // Build liquidation transaction
-      const tx = new Transaction();
-
-      // Ensure we have the repay token ATA
+      // Get token addresses
       const repayMint = healthInfo.repayReserve.getLiquidityMint();
       const liquidatorRepayAta = getAssociatedTokenAddress(repayMint, this.keypair.publicKey);
-
-      // Ensure we have the collateral token ATA  
       const collateralMint = healthInfo.withdrawReserve.getLiquidityMint();
       const liquidatorCollateralAta = getAssociatedTokenAddress(collateralMint, this.keypair.publicKey);
 
-      // Check if ATAs exist
+      // CHECK WALLET BALANCE before proceeding
       const repayAtaInfo = await this.connection.getAccountInfo(liquidatorRepayAta);
-      if (!repayAtaInfo) {
-        tx.add(createAtaInstruction(
-          this.keypair.publicKey,
-          liquidatorRepayAta,
-          this.keypair.publicKey,
-          repayMint
-        ));
+      if (repayAtaInfo) {
+        // Parse token account to get balance
+        const balance = repayAtaInfo.data.readBigUInt64LE(64); // Token balance at offset 64
+        const requiredAmount = BigInt(repayAmountLamports.toNumber());
+        
+        if (balance < requiredAmount) {
+          const balanceHuman = Number(balance) / Math.pow(10, decimals);
+          const requiredHuman = repayAmountLamports.toNumber() / Math.pow(10, decimals);
+          console.log(`   ❌ Insufficient ${healthInfo.repayReserve.symbol} balance`);
+          console.log(`      Have: ${balanceHuman.toFixed(4)} | Need: ${requiredHuman.toFixed(4)}`);
+          return;
+        }
+        console.log(`   ✅ Balance check passed`);
+      } else {
+        console.log(`   ❌ No ${healthInfo.repayReserve.symbol} token account found`);
+        console.log(`   💡 You need ${healthInfo.repayReserve.symbol} tokens to liquidate`);
+        return;
       }
+
+      // Build liquidation transaction
+      const tx = new Transaction();
 
       const collateralAtaInfo = await this.connection.getAccountInfo(liquidatorCollateralAta);
       if (!collateralAtaInfo) {
@@ -446,7 +475,7 @@ export class LiquidationBot {
 
     return new TransactionInstruction({
       keys,
-      programId: KAMINO_PROGRAM_ID,
+      programId: PROGRAM_ID,
       data,
     });
   }
