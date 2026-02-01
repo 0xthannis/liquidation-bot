@@ -488,18 +488,29 @@ export class CrossDexExecutor {
     const lendingMarketAuthority = await this.market.getLendingMarketAuthority();
 
     // Build flash loan instructions
-    const { flashBorrowIxn, flashRepayIxn } = getFlashLoanInstructions({
-      borrowIxnIndex: 0, // Will be adjusted
-      walletPublicKey: this.keypair.publicKey,
-      lendingMarketAuthority,
-      lendingMarketAddress: this.market.getAddress(),
-      reserve,
-      amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
-      destinationAta: userUsdcAta,
-      referrerAccount: PublicKey.default, // Use zero address for no referrer
-      referrerTokenState: PublicKey.default, // Use zero address for no referrer
-      programId: PROGRAM_ID,
-    });
+    console.log(`   📝 Building flash borrow instruction (amount=${flashAmount})...`);
+    let flashBorrowIxn, flashRepayIxn;
+    try {
+      const result = getFlashLoanInstructions({
+        borrowIxnIndex: 0, // Will be adjusted
+        walletPublicKey: this.keypair.publicKey,
+        lendingMarketAuthority,
+        lendingMarketAddress: this.market.getAddress(),
+        reserve,
+        amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
+        destinationAta: userUsdcAta,
+        referrerAccount: PublicKey.default, // Use zero address for no referrer
+        referrerTokenState: PublicKey.default, // Use zero address for no referrer
+        programId: PROGRAM_ID,
+      });
+      flashBorrowIxn = result.flashBorrowIxn;
+      flashRepayIxn = result.flashRepayIxn;
+      console.log(`   ✅ Flash borrow instruction built`);
+    } catch (borrowError: any) {
+      console.log(`   ❌ Flash borrow build failed: ${borrowError.message}`);
+      console.log(`   Stack: ${borrowError.stack?.slice(0, 300)}`);
+      throw borrowError;
+    }
 
     // Collect all lookup tables
     const altAddresses = [...new Set([
@@ -575,18 +586,27 @@ export class CrossDexExecutor {
     }
 
     // FLASH REPAY with correct borrow index
-    const { flashRepayIxn: flashRepayIxnCorrected } = getFlashLoanInstructions({
-      borrowIxnIndex: flashBorrowIndex,
-      walletPublicKey: this.keypair.publicKey,
-      lendingMarketAuthority,
-      lendingMarketAddress: this.market.getAddress(),
-      reserve,
-      amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
-      destinationAta: userUsdcAta,
-      referrerAccount: PublicKey.default, // Use zero address for no referrer
-      referrerTokenState: PublicKey.default, // Use zero address for no referrer
-      programId: PROGRAM_ID,
-    });
+    console.log(`   📝 Building flash repay instruction (borrowIndex=${flashBorrowIndex})...`);
+    let flashRepayIxnCorrected;
+    try {
+      const repayResult = getFlashLoanInstructions({
+        borrowIxnIndex: flashBorrowIndex,
+        walletPublicKey: this.keypair.publicKey,
+        lendingMarketAuthority,
+        lendingMarketAddress: this.market.getAddress(),
+        reserve,
+        amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
+        destinationAta: userUsdcAta,
+        referrerAccount: PublicKey.default, // Use zero address for no referrer
+        referrerTokenState: PublicKey.default, // Use zero address for no referrer
+        programId: PROGRAM_ID,
+      });
+      flashRepayIxnCorrected = repayResult.flashRepayIxn;
+      console.log(`   ✅ Flash repay instruction built`);
+    } catch (repayError: any) {
+      console.log(`   ❌ Flash repay build failed: ${repayError.message}`);
+      throw repayError;
+    }
     instructions.push(flashRepayIxnCorrected);
 
     // Build versioned transaction (with retry for rate limiting)
