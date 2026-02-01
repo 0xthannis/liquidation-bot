@@ -275,7 +275,7 @@ export class CrossDexMonitor {
       
       const apiKey = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
       const response = await fetch(
-        `https://api.jup.ag/quote/v1?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=50`,
+        `https://api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=50`,
         { headers: { 'Accept': 'application/json', 'x-api-key': apiKey } }
       );
       

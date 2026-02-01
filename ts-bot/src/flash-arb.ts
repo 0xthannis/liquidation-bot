@@ -30,7 +30,7 @@ import { startApiServer, recordTrade, recordScan, updateWalletBalance } from './
 // ============== CONFIGURATION ==============
 const RPC_URL = process.env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
-const JUPITER_API_KEY = process.env.JUPITER_API_KEY || '';
+const JUPITER_API_KEY = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
 
 // Kamino Main Market
 const KAMINO_MARKET_ADDRESS = '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF';
