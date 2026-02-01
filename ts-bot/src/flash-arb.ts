@@ -278,8 +278,9 @@ async function executeFlashLoanArbitrage(
   }
   
   // 2. Get Jupiter quotes for round-trip
-  // Use tighter slippage for larger amounts
-  const slippageBps = Number(flashLoanAmount) > 100_000_000_000n ? 50 : 100; // 0.5% for >100K, else 1%
+  // AGGRESSIVE slippage - priority is TX SUCCESS, not saving on slippage
+  // For big amounts: accept more slippage to ensure execution
+  const slippageBps = 300; // 3% slippage - ensures TX goes through
   const quoteForward = await getJupiterQuote(flashMint, swapMint, Number(flashLoanAmount), slippageBps);
   if (!quoteForward) {
     console.log('   ❌ No quote forward');
@@ -414,23 +415,22 @@ async function executeFlashLoanArbitrage(
   
   // Compute budget (high limit for flash loan + 2 swaps)
   instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }));
-  instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })); // Higher priority
+  instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 500000 })); // MAX priority fee
   
-  // Jito tip for faster inclusion - DYNAMIC based on profit
-  // Tip is part of atomic tx: if tx fails, tip is NOT paid
-  // If tx succeeds, profit covers the tip
-  // Strategy: 20% of profit to outbid competition, capped at 0.05 SOL
+  // AGGRESSIVE Jito tip - BE FIRST, NO MATTER WHAT
+  // Tip is ONLY paid if TX succeeds (atomic) - so tip high!
+  // Strategy: 50% of profit to GUARANTEE we beat competition
   let tipLamports: number;
   if (flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL') {
     // Profit is already in lamports
-    tipLamports = Math.floor(profit * 0.20); // 20% of profit
+    tipLamports = Math.floor(profit * 0.50); // 50% of profit to validators
   } else {
-    // Profit is in micro-USDC, convert roughly to lamports
-    // Assume 1 SOL ≈ 200 USDC, so 1 USDC ≈ 0.005 SOL = 5M lamports / 1M micro = 5 lamports per micro
-    tipLamports = Math.floor(profit * 5 * 0.20); // 20% of profit in lamports
+    // Profit is in micro-USDC, convert to lamports
+    // 1 SOL ≈ 200 USDC, so 1 micro-USDC ≈ 5 lamports
+    tipLamports = Math.floor(profit * 5 * 0.50); // 50% of profit
   }
-  // Minimum 0.001 SOL, maximum 0.05 SOL
-  tipLamports = Math.max(1_000_000, Math.min(tipLamports, 50_000_000));
+  // Minimum 0.01 SOL to get noticed, NO MAXIMUM - if profit is huge, tip huge
+  tipLamports = Math.max(10_000_000, tipLamports); // Min 0.01 SOL, no cap
   
   console.log(`   💸 Jito tip: ${(tipLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
   
