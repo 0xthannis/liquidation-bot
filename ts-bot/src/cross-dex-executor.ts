@@ -111,7 +111,13 @@ export class CrossDexExecutor {
       console.log(`   🔍 Finding optimal flash loan amount...`);
       console.log(`   Buy on: ${buyDex} -> Sell on: ${sellDex}`);
       
-      const testAmounts = [10_000, 50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000];
+      // Test amounts from $10k to $100M - find the sweet spot with max profit
+      const testAmounts = [
+        10_000, 50_000, 100_000, 500_000,           // Small
+        1_000_000, 2_000_000, 5_000_000,            // Medium  
+        10_000_000, 25_000_000, 50_000_000,         // Large
+        100_000_000                                  // Max (if Kamino has liquidity)
+      ];
       let bestAmount = 0;
       let bestProfit = 0;
       let bestQuote1: any = null;
