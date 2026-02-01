@@ -6,6 +6,7 @@
 import { Connection, Keypair } from '@solana/web3.js';
 import { KaminoMarket } from '@kamino-finance/klend-sdk';
 import CrossDexMonitor, { CrossDexOpportunity, crossDexStats } from './cross-dex-monitor';
+import { CrossDexExecutor } from './cross-dex-executor';
 import { botStats, recordTrade } from './api-server';
 
 // Mutex state
@@ -133,12 +134,14 @@ export class ArbitrageEngine {
   private keypair: Keypair;
   private market: KaminoMarket | null = null;
   private crossDexMonitor: CrossDexMonitor;
+  private crossDexExecutor: CrossDexExecutor;
   private isRunning = false;
 
   constructor(connection: Connection, keypair: Keypair) {
     this.connection = connection;
     this.keypair = keypair;
     this.crossDexMonitor = new CrossDexMonitor(connection);
+    this.crossDexExecutor = new CrossDexExecutor(connection, keypair);
 
     // Set up cross-DEX opportunity callback
     this.crossDexMonitor.setOpportunityCallback(
@@ -148,9 +151,10 @@ export class ArbitrageEngine {
 
   async initialize(market: KaminoMarket): Promise<void> {
     this.market = market;
+    await this.crossDexExecutor.initialize(market);
     console.log('\n🚀 Arbitrage Engine initialized');
     console.log('   - Round-Trip: Ready (uses existing flash-arb.ts)');
-    console.log('   - Cross-DEX: Ready (event-based monitoring)');
+    console.log('   - Cross-DEX: Ready (REAL execution with Kamino)');
     console.log('   - Mutex: Active (2s cooldown)\n');
   }
 
@@ -183,71 +187,14 @@ export class ArbitrageEngine {
   }
 
   /**
-   * Execute cross-DEX arbitrage
-   * Buy on cheaper DEX, sell on expensive DEX
+   * Execute cross-DEX arbitrage using real Kamino flash loans
    */
   private async executeCrossDexArbitrage(
     opportunity: CrossDexOpportunity
   ): Promise<boolean> {
-    console.log(`\n🔄 Executing Cross-DEX Arbitrage:`);
-    console.log(`   Pair: ${opportunity.pair}`);
-    console.log(`   Direction: ${opportunity.direction}`);
-    console.log(`   Spread: ${opportunity.spreadPercent.toFixed(3)}%`);
-    console.log(`   Potential: $${opportunity.potentialProfitUsd.toFixed(2)}`);
-
     try {
-      // For now, we just log and simulate
-      // Real implementation would:
-      // 1. Flash borrow from Kamino
-      // 2. Swap on Raydium (buy)
-      // 3. Swap on Orca (sell)
-      // 4. Repay flash loan
-      // 5. Keep profit
-
-      // Simulate execution time
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // For testing: random success (30% chance)
-      // In production, this would be actual transaction execution
-      const success = Math.random() < 0.3;
-
-      if (success) {
-        const profit = opportunity.potentialProfitUsd * 0.7; // 70% of potential due to slippage
-        crossDexStats.totalProfitUsd += profit;
-        crossDexStats.opportunitiesExecuted++;
-        
-        botStats.totalProfitUsd += profit;
-        botStats.opportunitiesFound++;
-
-        recordTrade({
-          pair: opportunity.pair,
-          type: 'cross_dex',
-          amount: opportunity.swapAmountUsd,
-          profit: profit,
-          profitUsd: profit,
-          status: 'cross_dex_success',
-          details: `Direction: ${opportunity.direction}, Spread: ${opportunity.spreadPercent.toFixed(3)}%`,
-        });
-
-        console.log(`   ✅ SUCCESS! Profit: $${profit.toFixed(2)}`);
-        return true;
-      } else {
-        crossDexStats.opportunitiesMissed++;
-        crossDexStats.missedReasons.latency++;
-
-        recordTrade({
-          pair: opportunity.pair,
-          type: 'cross_dex',
-          amount: opportunity.swapAmountUsd,
-          profit: 0,
-          profitUsd: 0,
-          status: 'cross_dex_failed',
-          details: `Failed due to latency/slippage. Direction: ${opportunity.direction}`,
-        });
-
-        console.log(`   ❌ FAILED (latency/slippage)`);
-        return false;
-      }
+      // Use the real executor with Kamino flash loans
+      return await this.crossDexExecutor.execute(opportunity);
     } catch (error) {
       console.error(`   ❌ Error:`, error);
       
