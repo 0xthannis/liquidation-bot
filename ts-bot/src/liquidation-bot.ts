@@ -191,96 +191,118 @@ export class LiquidationBot {
   private async getAllObligations(): Promise<KaminoObligation[]> {
     if (!this.market) return [];
 
-    console.log('   Fetching obligations...');
+    console.log('   Fetching obligations via Helius API...');
 
-    // Method 1: Use SDK's batch generator (most reliable)
+    // Extract API key from RPC URL
+    const rpcUrl = this.connection.rpcEndpoint;
+    const apiKeyMatch = rpcUrl.match(/api-key=([^&]+)/);
+    const apiKey = apiKeyMatch ? apiKeyMatch[1] : '';
+
+    if (!apiKey) {
+      console.log('   ⚠️ No Helius API key found in RPC URL');
+      return [];
+    }
+
+    // Use Helius searchAssets API to find Kamino program accounts
     try {
-      console.log('   Using SDK batch method...');
-      const obligations: KaminoObligation[] = [];
-      const generator = this.market.batchGetAllObligationsForMarket();
+      const heliusUrl = `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
       
-      let batchCount = 0;
-      for await (const batch of generator) {
-        batchCount++;
-        for (const obl of batch) {
-          if (obl && obl.borrows && obl.borrows.size > 0) {
-            obligations.push(obl);
+      // Get recent signatures for the Kamino program to find active obligations
+      const signaturesResponse = await fetch(heliusUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getSignaturesForAddress',
+          params: [
+            PROGRAM_ID.toBase58(),
+            { limit: 100 }
+          ]
+        })
+      });
+
+      const sigData = await signaturesResponse.json();
+      const signatures = sigData.result || [];
+      console.log(`   Found ${signatures.length} recent Kamino transactions`);
+
+      if (signatures.length === 0) {
+        console.log('   No recent transactions found');
+        return [];
+      }
+
+      // Get transaction details to extract obligation addresses
+      const obligationAddresses = new Set<string>();
+      
+      for (const sig of signatures.slice(0, 50)) {
+        try {
+          const txResponse = await fetch(heliusUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getTransaction',
+              params: [sig.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]
+            })
+          });
+
+          const txData = await txResponse.json();
+          const tx = txData.result;
+          
+          if (tx?.transaction?.message?.accountKeys) {
+            // Look for accounts that might be obligations (owned by Kamino program)
+            for (const acc of tx.transaction.message.accountKeys) {
+              const pubkey = typeof acc === 'string' ? acc : acc.pubkey;
+              if (pubkey && pubkey !== PROGRAM_ID.toBase58() && pubkey !== KAMINO_MAIN_MARKET.toBase58()) {
+                obligationAddresses.add(pubkey);
+              }
+            }
           }
+        } catch {
+          // Skip failed transactions
         }
-        console.log(`   Batch ${batchCount}: ${batch.length} obligations (${obligations.length} with borrows)`);
-        
-        // Limit to 500 obligations for performance
-        if (obligations.length >= 500) break;
+
+        // Progress
+        if (obligationAddresses.size >= 100) break;
       }
-      
-      if (obligations.length > 0) {
-        console.log(`   ✅ Found ${obligations.length} obligations with active borrows`);
-        return obligations;
-      }
-    } catch (e: any) {
-      console.log(`   SDK batch failed: ${e.message?.substring(0, 50) || 'unknown'}`);
-    }
 
-    // Method 2: Try SDK's standard method
-    try {
-      console.log('   Trying SDK getAllObligationsForMarket...');
-      const allObligations = await this.market.getAllObligationsForMarket();
-      const withBorrows = allObligations.filter(o => o && o.borrows && o.borrows.size > 0);
-      if (withBorrows.length > 0) {
-        console.log(`   ✅ SDK found ${withBorrows.length} obligations`);
-        return withBorrows;
-      }
-    } catch (e: any) {
-      console.log(`   SDK standard failed: ${e.message?.substring(0, 50) || 'unknown'}`);
-    }
+      console.log(`   Extracted ${obligationAddresses.size} potential obligation addresses`);
 
-    // Method 3: Direct RPC with correct Obligation size from SDK
-    // SDK uses Obligation.layout.span + 8 = 3096 bytes (3088 + 8 discriminator)
-    try {
-      console.log('   Trying direct RPC...');
-      const OBLIGATION_SIZE = 3096;
-      
-      const accounts = await this.connection.getProgramAccounts(
-        PROGRAM_ID,
-        {
-          filters: [
-            { dataSize: OBLIGATION_SIZE },
-            {
-              memcmp: {
-                offset: 32,
-                bytes: KAMINO_MAIN_MARKET.toBase58(),
-              },
-            },
-          ],
-        }
-      );
+      // Try to parse each as an obligation
+      const obligations: KaminoObligation[] = [];
+      let checked = 0;
 
-      console.log(`   RPC found ${accounts.length} obligation accounts`);
-
-      if (accounts.length > 0) {
-        const obligations: KaminoObligation[] = [];
-        for (const acc of accounts.slice(0, 300)) {
-          try {
-            const obl = await this.market!.getObligationByAddress(acc.pubkey);
-            if (obl && obl.borrows && obl.borrows.size > 0) {
+      for (const addr of obligationAddresses) {
+        try {
+          const obl = await this.market!.getObligationByAddress(new PublicKey(addr));
+          checked++;
+          
+          if (obl && obl.borrows && obl.borrows.size > 0) {
+            // Verify it's for our market
+            if (obl.state.lendingMarket.toBase58() === KAMINO_MAIN_MARKET.toBase58()) {
               obligations.push(obl);
             }
-          } catch {
-            // Skip invalid
           }
+        } catch {
+          // Not an obligation or invalid
         }
-        
-        if (obligations.length > 0) {
-          console.log(`   ✅ Found ${obligations.length} obligations with borrows`);
-          return obligations;
-        }
-      }
-    } catch (e: any) {
-      console.log(`   RPC failed: ${e.message?.substring(0, 40)}`);
-    }
 
-    console.log('   ⚠️ No obligations found - all methods failed');
-    return [];
+        if (checked % 20 === 0) {
+          console.log(`   Checked ${checked}/${obligationAddresses.size}, found ${obligations.length} obligations`);
+        }
+
+        // Stop if we have enough
+        if (obligations.length >= 50) break;
+      }
+
+      console.log(`   ✅ Found ${obligations.length} valid obligations with borrows`);
+      return obligations;
+
+    } catch (e: any) {
+      console.log(`   Helius API error: ${e.message?.substring(0, 50) || 'unknown'}`);
+      return [];
+    }
   }
 
   private async parseObligations(accounts: readonly { pubkey: PublicKey; account: any }[]): Promise<KaminoObligation[]> {
