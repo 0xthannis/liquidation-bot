@@ -13,8 +13,14 @@ import { ArbitrageEngine, executeWithLock, engineStats } from './arbitrage-engin
 import { startApiServer, botStats } from './api-server';
 import { crossDexStats } from './cross-dex-monitor';
 
-// Load environment
-import 'dotenv/config';
+// Load environment - use path relative to this file
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenv.config({ path: join(__dirname, '..', '.env') });
 
 // Constants
 const KAMINO_MAIN_MARKET = '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF';
