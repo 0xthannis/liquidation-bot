@@ -317,7 +317,7 @@ async function executeFlashLoanArbitrage(
   }
   
   const amountOut = BigInt(quoteReturn.outAmount);
-  const flashLoanFee = flashLoanAmount * 9n / 10000n; // 0.09% Kamino fee
+  const flashLoanFee = flashLoanAmount / 100000n; // 0.001% Kamino fee (per docs)
   const totalRepay = flashLoanAmount + flashLoanFee;
   
   // Check profitability - need buffer for gas (~0.001 SOL = 1M lamports worth)
