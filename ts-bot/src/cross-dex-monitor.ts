@@ -107,9 +107,9 @@ export class CrossDexMonitor {
   
   // Rate limiting and caching
   private priceCache: Map<string, PriceCache> = new Map();
-  private priceCacheTTL: number = 5000; // 5 seconds cache (reduced RPC calls)
+  private priceCacheTTL: number = 10000; // 10 seconds cache (reduce Jupiter 429)
   private lastPriceCheck: number = 0;
-  private minCheckInterval: number = 5000; // 5 seconds between checks (reduced rate limiting)
+  private minCheckInterval: number = 8000; // 8 seconds between checks
   private pendingChecks: number = 0;
   private maxPendingChecks: number = 1; // Only 1 concurrent check (avoid 429)
 
@@ -438,19 +438,26 @@ export class CrossDexMonitor {
     const cached = this.priceCache.get(cacheKey);
     const now = Date.now();
     
-    // Return cached price if still valid
+    // Return cached price if still valid (10s cache to reduce 429)
     if (cached && (now - cached.timestamp) < this.priceCacheTTL) {
       return cached.price;
     }
     
-    // Fetch price directly from pool (no Jupiter = no 429!)
-    const dex = source as 'raydium' | 'orca' | 'pumpswap';
-    const price = await getPoolPrice(this.connection, dex);
+    // Use on-chain price for Raydium only (simple AMM)
+    // For Orca (CLMM), use Jupiter with longer cache
+    if (source === 'raydium') {
+      const price = await getPoolPrice(this.connection, 'raydium');
+      if (price !== null) {
+        this.priceCache.set(cacheKey, { price, timestamp: now });
+      }
+      return price;
+    }
     
+    // For Orca, fetch via Jupiter (but cached for 10s)
+    const price = await this.fetchPrice(tokenA, tokenB);
     if (price !== null) {
       this.priceCache.set(cacheKey, { price, timestamp: now });
     }
-    
     return price;
   }
 
