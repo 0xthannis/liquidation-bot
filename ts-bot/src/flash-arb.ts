@@ -225,6 +225,15 @@ async function executeFlashLoanArbitrage(
   const quoteForward = await getJupiterQuote(flashMint, swapMint, Number(flashLoanAmount), slippageBps);
   if (!quoteForward) {
     console.log('   ❌ No quote forward');
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: 0,
+      profitUsd: 0,
+      status: 'no_route',
+      reason: `Pas de route Jupiter: ${flashTokenSymbol} → ${swapTokenSymbol}`,
+    });
     return null;
   }
   
@@ -237,6 +246,15 @@ async function executeFlashLoanArbitrage(
   const quoteReturn = await getJupiterQuote(swapMint, flashMint, amountMid, slippageBps);
   if (!quoteReturn) {
     console.log('   ❌ No quote return');
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: 0,
+      profitUsd: 0,
+      status: 'no_route',
+      reason: `Pas de route retour: ${swapTokenSymbol} → ${flashTokenSymbol}`,
+    });
     return null;
   }
   
@@ -248,7 +266,20 @@ async function executeFlashLoanArbitrage(
   const gasBuffer = decimals === 9 ? 1_000_000n : 1000n; // 0.001 SOL or 0.001 USDC
   if (amountOut <= totalRepay + gasBuffer) {
     const diff = Number(totalRepay - amountOut);
-    console.log(`   ❌ Not profitable: -${diff / Math.pow(10, decimals)} ${flashTokenSymbol}`);
+    const loss = diff / Math.pow(10, decimals);
+    const lossUsd = (flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL') ? loss * 200 : loss;
+    console.log(`   ❌ Not profitable: -${loss} ${flashTokenSymbol}`);
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: -loss,
+      profitUsd: -lossUsd,
+      status: 'not_profitable',
+      reason: `Perte: -${loss.toFixed(4)} ${flashTokenSymbol} (-$${lossUsd.toFixed(2)})`,
+      quoteIn: displayAmount,
+      quoteOut: Number(amountOut) / Math.pow(10, decimals),
+    });
     return null;
   }
   
@@ -275,6 +306,9 @@ async function executeFlashLoanArbitrage(
       profit: profitDisplay,
       profitUsd: profitInUsd,
       status: 'skipped',
+      reason: `Profit trop petit: $${profitInUsd.toFixed(2)} < seuil $${minProfitUsd}`,
+      quoteIn: displayAmount,
+      quoteOut: Number(amountOut) / Math.pow(10, decimals),
     });
     return null;
   }
@@ -419,6 +453,7 @@ async function executeFlashLoanArbitrage(
   
   if (simulation.value.err) {
     console.log('   ❌ Simulation failed:', JSON.stringify(simulation.value.err));
+    let errorReason = JSON.stringify(simulation.value.err);
     if (simulation.value.logs) {
       const errorLogs = simulation.value.logs.filter((l: string) => 
         l.toLowerCase().includes('error') || 
@@ -426,7 +461,17 @@ async function executeFlashLoanArbitrage(
         l.includes('Program log:')
       ).slice(-5);
       errorLogs.forEach((l: string) => console.log('      ', l));
+      if (errorLogs.length > 0) errorReason = errorLogs[errorLogs.length - 1];
     }
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: profitDisplay,
+      profitUsd: profitInUsd,
+      status: 'simulation_failed',
+      reason: `Simulation échouée: ${errorReason.slice(0, 100)}`,
+    });
     return null;
   }
   
@@ -449,6 +494,16 @@ async function executeFlashLoanArbitrage(
     
     if (confirmation.value.err) {
       console.log('   ❌ Tx failed:', confirmation.value.err);
+      recordTrade({
+        pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+        amount: displayAmount,
+        token: flashTokenSymbol,
+        profit: profitDisplay,
+        profitUsd: profitInUsd,
+        status: 'failed',
+        reason: `Transaction échouée: ${JSON.stringify(confirmation.value.err).slice(0, 100)}`,
+        txHash: signature,
+      });
       return null;
     }
     
@@ -467,6 +522,15 @@ async function executeFlashLoanArbitrage(
     
   } catch (e: any) {
     console.log('   ❌ Send error:', e.message?.slice(0, 100));
+    recordTrade({
+      pair: `${flashTokenSymbol} → ${swapTokenSymbol} → ${flashTokenSymbol}`,
+      amount: displayAmount,
+      token: flashTokenSymbol,
+      profit: profitDisplay,
+      profitUsd: profitInUsd,
+      status: 'failed',
+      reason: `Erreur envoi: ${e.message?.slice(0, 80) || 'Unknown'}`,
+    });
     return null;
   }
 }

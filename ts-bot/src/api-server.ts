@@ -31,9 +31,11 @@ export interface TradeRecord {
   token: string;
   profit: number;
   profitUsd: number;
-  status: 'success' | 'failed' | 'skipped';
+  status: 'success' | 'failed' | 'skipped' | 'not_profitable' | 'no_route' | 'simulation_failed';
   txHash?: string;
-  error?: string;
+  reason?: string; // Detailed reason for status
+  quoteIn?: number;
+  quoteOut?: number;
 }
 
 // Global stats object
