@@ -309,8 +309,8 @@ export class CrossDexMonitor {
       ]);
 
       console.log(`📊 ${pair} prices:`);
-      console.log(`   Raydium:  ${raydiumPrice ? `$${raydiumPrice.toFixed(4)}` : '❌'}`);
-      console.log(`   Orca:     ${orcaPrice ? `$${orcaPrice.toFixed(4)}` : '❌'}`);
+      console.log(`   Raydium:  ${raydiumPrice ? `${raydiumPrice.toExponential(2)} SOL` : '❌'}`);
+      console.log(`   Orca:     ${orcaPrice ? `${orcaPrice.toExponential(2)} SOL` : '❌'}`);
 
       // Find the best arbitrage opportunity across Raydium & Orca
       const prices: { dex: string; price: number }[] = [];
