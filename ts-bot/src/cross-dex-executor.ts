@@ -62,6 +62,9 @@ export class CrossDexExecutor {
   private connection: Connection;
   private keypair: Keypair;
   private market: KaminoMarket | null = null;
+  private lastKaminoLiquidity: bigint = 0n;
+  private lastLiquidityCheck: number = 0;
+  private readonly LIQUIDITY_CACHE_MS = 30000; // 30s cache
 
   constructor(connection: Connection, keypair: Keypair) {
     this.connection = connection;
@@ -70,7 +73,109 @@ export class CrossDexExecutor {
 
   async initialize(market: KaminoMarket): Promise<void> {
     this.market = market;
+    await this.refreshKaminoLiquidity();
     console.log('✅ Cross-DEX Executor initialized');
+    console.log(`   Kamino USDC available: $${(Number(this.lastKaminoLiquidity) / 1_000_000).toLocaleString()}`);
+  }
+
+  /**
+   * Get available liquidity from Kamino USDC reserve
+   */
+  private async refreshKaminoLiquidity(): Promise<bigint> {
+    if (!this.market) return 0n;
+    
+    // Use cache if recent
+    if (Date.now() - this.lastLiquidityCheck < this.LIQUIDITY_CACHE_MS) {
+      return this.lastKaminoLiquidity;
+    }
+
+    try {
+      const usdcMint = new PublicKey(TOKENS.USDC);
+      const reserve = this.market.getReserveByMint(usdcMint);
+      if (!reserve) return 0n;
+
+      // Get reserve liquidity from Kamino
+      const reserveState = reserve.state;
+      const availableLiquidity = reserveState.liquidity?.availableAmount || 0n;
+      
+      this.lastKaminoLiquidity = BigInt(availableLiquidity.toString());
+      this.lastLiquidityCheck = Date.now();
+      
+      return this.lastKaminoLiquidity;
+    } catch (error) {
+      console.log(`   ⚠️ Error fetching Kamino liquidity: ${error}`);
+      return this.lastKaminoLiquidity;
+    }
+  }
+
+  /**
+   * Calculate optimal flash loan amount based on:
+   * 1. Kamino available liquidity
+   * 2. DEX pool liquidity (to minimize slippage)
+   * 3. Spread percentage (larger spread = can use more)
+   */
+  private async calculateOptimalAmounts(
+    spreadPercent: number,
+    buyDex: string,
+    sellDex: string
+  ): Promise<number[]> {
+    // Refresh Kamino liquidity
+    const kaminoLiquidity = await this.refreshKaminoLiquidity();
+    const kaminoLiquidityUsd = Number(kaminoLiquidity) / 1_000_000;
+    
+    // Max we can borrow from Kamino (leave 10% buffer)
+    const maxKaminoBorrow = kaminoLiquidityUsd * 0.9;
+    
+    // Get DEX pool reserves to estimate max safe trade size
+    let maxDexTrade = 10_000_000; // Default 10M if can't fetch
+    
+    try {
+      // For Raydium/Orca, estimate max trade as 2% of pool to minimize slippage
+      if (buyDex === 'raydium') {
+        const balance = await this.connection.getTokenAccountBalance(POOLS.raydium.pcVault);
+        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02); // Max 2% of pool
+      } else if (buyDex === 'orca') {
+        const balance = await this.connection.getTokenAccountBalance(POOLS.orca.tokenVaultB);
+        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
+      }
+      
+      if (sellDex === 'raydium') {
+        const balance = await this.connection.getTokenAccountBalance(POOLS.raydium.pcVault);
+        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
+      } else if (sellDex === 'orca') {
+        const balance = await this.connection.getTokenAccountBalance(POOLS.orca.tokenVaultB);
+        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
+      }
+    } catch (error) {
+      // Use default if pool fetch fails
+    }
+    
+    // Calculate max safe amount
+    const maxSafeAmount = Math.min(maxKaminoBorrow, maxDexTrade);
+    
+    // Generate test amounts dynamically based on available liquidity
+    // More amounts to test when spread is good
+    const baseAmounts = spreadPercent >= 0.1
+      ? [5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000]
+      : [5_000, 10_000, 25_000, 50_000, 100_000, 250_000];
+    
+    // Filter to amounts within our limits
+    const validAmounts = baseAmounts.filter(a => a <= maxSafeAmount);
+    
+    // Add the max safe amount if it's larger than our biggest test
+    if (maxSafeAmount > validAmounts[validAmounts.length - 1]) {
+      validAmounts.push(Math.floor(maxSafeAmount));
+    }
+    
+    console.log(`   📊 Kamino liquidity: $${kaminoLiquidityUsd.toLocaleString()}`);
+    console.log(`   📊 Max safe borrow: $${maxSafeAmount.toLocaleString()}`);
+    console.log(`   📊 Testing ${validAmounts.length} amounts: $${validAmounts[0].toLocaleString()} - $${validAmounts[validAmounts.length - 1].toLocaleString()}`);
+    
+    return validAmounts;
   }
 
   /**
@@ -115,15 +220,18 @@ export class CrossDexExecutor {
         return false;
       }
 
-      // DYNAMIC OPTIMAL AMOUNT: Test multiple amounts and pick the most profitable
+      // DYNAMIC OPTIMAL AMOUNT: Test multiple amounts based on Kamino + DEX liquidity
       console.log(`   🔍 Finding optimal flash loan amount...`);
       console.log(`   Buy on: ${buyDex} -> Sell on: ${sellDex}`);
       console.log(`   Mode: ${USE_DIRECT_AMM ? '🚀 DIRECT AMM (low fees)' : '🔄 Jupiter'}`);
       
-      // Test amounts - smaller for direct AMM (less slippage impact)
-      const testAmounts = USE_DIRECT_AMM
-        ? [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000] // Direct AMM: smaller amounts
-        : [10_000, 50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]; // Jupiter: larger
+      // Calculate optimal test amounts based on available liquidity
+      const testAmounts = await this.calculateOptimalAmounts(spreadPercent, buyDex, sellDex);
+      
+      if (testAmounts.length === 0) {
+        console.log(`   ❌ No valid amounts to test (insufficient Kamino liquidity)`);
+        return false;
+      }
       
       let bestAmount = 0;
       let bestProfit = 0;
