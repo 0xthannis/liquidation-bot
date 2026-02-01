@@ -79,13 +79,16 @@ export function recordTrade(trade: Omit<TradeRecord, 'id' | 'timestamp'>) {
     botStats.totalProfit += trade.profit;
     botStats.totalProfitUsd += trade.profitUsd;
     botStats.todayProfit += trade.profitUsd;
-  } else if (trade.status === 'failed') {
+    // Only count as "opportunity" if actually profitable
+    if (trade.profitUsd > 0) {
+      botStats.opportunitiesFound++;
+    }
+  } else if (trade.status === 'failed' || trade.status === 'simulation_failed') {
     botStats.failedTrades++;
   } else {
     botStats.skippedTrades++;
   }
   
-  botStats.opportunitiesFound++;
   statsEmitter.emit('trade', record);
 }
 
