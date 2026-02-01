@@ -191,70 +191,75 @@ export class LiquidationBot {
   private async getAllObligations(): Promise<KaminoObligation[]> {
     if (!this.market) return [];
 
+    console.log('   Scanning for liquidatable positions...');
+    console.log(`   Program ID: ${PROGRAM_ID.toBase58()}`);
+    console.log(`   Market: ${KAMINO_MAIN_MARKET.toBase58()}`);
+
     try {
-      // Use SDK method but wrap in try-catch to handle errors
-      console.log('   Fetching obligations via SDK...');
-      
-      // Get all obligations for the market using SDK
+      // Method 1: Use SDK's getAllObligationsForMarket
       const allObligations = await this.market.getAllObligationsForMarket();
-      
-      // Filter to only obligations with borrows
       const withBorrows = allObligations.filter(o => o && o.borrows && o.borrows.size > 0);
-      console.log(`   SDK found ${withBorrows.length} obligations with borrows`);
       
-      return withBorrows;
+      if (withBorrows.length > 0) {
+        console.log(`   ✅ SDK found ${withBorrows.length} obligations with borrows`);
+        return withBorrows;
+      }
+    } catch (e: any) {
+      console.log(`   SDK method failed: ${e.message?.substring(0, 60) || 'unknown'}`);
+    }
+
+    try {
+      // Method 2: Get all program accounts (no filter) and parse
+      console.log('   Trying getProgramAccounts without filters...');
       
-    } catch (sdkError: any) {
-      console.log(`   SDK error: ${sdkError.message?.substring(0, 50)}...`);
-      console.log('   Falling back to direct RPC scan...');
+      const allAccounts = await this.connection.getProgramAccounts(PROGRAM_ID, {
+        dataSlice: { offset: 0, length: 0 }, // Just get pubkeys first
+      });
       
-      try {
-        // Direct RPC: Get accounts that reference our market
-        // Offset 8 is where lending_market pubkey starts in Obligation account
-        const accounts = await this.connection.getProgramAccounts(
-          PROGRAM_ID,
-          {
-            filters: [
-              {
-                memcmp: {
-                  offset: 8,
-                  bytes: KAMINO_MAIN_MARKET.toBase58(),
-                },
-              },
-            ],
-          }
-        );
-        
-        console.log(`   RPC found ${accounts.length} accounts for this market`);
-        
-        if (accounts.length === 0) {
-          return [];
-        }
-        
-        // Parse obligations
-        const obligations: KaminoObligation[] = [];
-        let parsed = 0;
-        let errors = 0;
-        
-        for (const acc of accounts.slice(0, 200)) {
-          try {
-            const obl = await this.market!.getObligationByAddress(acc.pubkey);
-            if (obl && obl.borrows && obl.borrows.size > 0) {
-              obligations.push(obl);
-              parsed++;
-            }
-          } catch {
-            errors++;
-          }
-        }
-        
-        console.log(`   Parsed ${parsed} valid obligations (${errors} errors)`);
-        return obligations;
-        
-      } catch (rpcError: any) {
-        console.log(`   RPC error: ${rpcError.message}`);
+      console.log(`   Found ${allAccounts.length} total accounts in Kamino program`);
+      
+      if (allAccounts.length === 0) {
+        console.log('   ⚠️ No accounts found - check RPC or Program ID');
         return [];
       }
+      
+      // Sample random accounts to find obligations
+      const sampleSize = Math.min(500, allAccounts.length);
+      const shuffled = [...allAccounts].sort(() => Math.random() - 0.5).slice(0, sampleSize);
+      
+      const obligations: KaminoObligation[] = [];
+      let checked = 0;
+      
+      for (const acc of shuffled) {
+        try {
+          const obl = await this.market!.getObligationByAddress(acc.pubkey);
+          if (obl && obl.borrows && obl.borrows.size > 0) {
+            // Verify it's for our market
+            if (obl.state.lendingMarket.toBase58() === KAMINO_MAIN_MARKET.toBase58()) {
+              obligations.push(obl);
+            }
+          }
+          checked++;
+          
+          // Stop early if we found enough
+          if (obligations.length >= 50) break;
+          
+        } catch {
+          // Not an obligation or invalid
+        }
+        
+        // Progress update
+        if (checked % 100 === 0) {
+          console.log(`   Checked ${checked}/${sampleSize}, found ${obligations.length} obligations...`);
+        }
+      }
+      
+      console.log(`   ✅ Found ${obligations.length} valid obligations from ${checked} accounts`);
+      return obligations;
+      
+    } catch (rpcError: any) {
+      console.log(`   RPC error: ${rpcError.message}`);
+      return [];
     }
   }
 
