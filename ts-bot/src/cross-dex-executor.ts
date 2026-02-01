@@ -76,9 +76,18 @@ export class CrossDexExecutor {
       return false;
     }
 
+    // Check wallet has enough SOL for fees (need ~0.005 SOL minimum)
+    const MIN_SOL_FOR_FEES = 0.005 * LAMPORTS_PER_SOL; // 0.005 SOL
+    const walletBalance = await this.connection.getBalance(this.keypair.publicKey);
+    if (walletBalance < MIN_SOL_FOR_FEES) {
+      console.log(`❌ Insufficient SOL for fees: ${walletBalance / LAMPORTS_PER_SOL} SOL`);
+      return false;
+    }
+
     const { pair, direction, spreadPercent, potentialProfitUsd, swapAmountUsd } = opportunity;
     
     console.log(`\n🔄 Executing Cross-DEX Arbitrage:`);
+    console.log(`   Wallet: ${(walletBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
     console.log(`   Pair: ${pair}`);
     console.log(`   Direction: ${direction}`);
     console.log(`   Spread: ${spreadPercent.toFixed(3)}%`);
@@ -91,8 +100,12 @@ export class CrossDexExecutor {
       const sellDex = direction === 'raydium_to_orca' ? 'orca' : 'raydium';
 
       // Calculate flash loan amount (in USDC micro-units)
-      // Use smaller amount to reduce slippage: $10k-$50k based on opportunity size
-      const flashAmountUsd = Math.min(50000, Math.max(10000, swapAmountUsd * 0.1));
+      // IMPORTANT: Flash loans are FREE capital from Kamino - we don't need our own money!
+      // The only cost is: Kamino fee (0.001%) + Jito tip + priority fees
+      // We need ~0.01 SOL in wallet for fees, which you have ($22 = ~0.1 SOL)
+      // 
+      // Strategy: Use $1k-$5k to minimize slippage while maximizing profit
+      const flashAmountUsd = Math.min(5000, Math.max(1000, swapAmountUsd * 0.05));
       const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000)); // USDC has 6 decimals
 
       console.log(`   Flash Loan: $${flashAmountUsd.toLocaleString()} USDC`);
@@ -297,11 +310,27 @@ export class CrossDexExecutor {
 
     // Compute budget
     instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
-    instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 500000 }));
+    instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100000 })); // Lower priority fee
 
-    // Jito tip (50% of profit)
-    const tipLamports = Math.max(10_000_000, Math.floor(profitUsd * 5 * 0.50 * 1_000_000));
-    console.log(`   💸 Jito tip: ${(tipLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+    // Smart Jito tip strategy:
+    // - Minimum: 0.001 SOL (enough to get noticed)
+    // - Maximum: 30% of profit (keep 70% for yourself)
+    // - Scale: tip more for bigger profits
+    const SOL_PRICE_USD = 100; // Approximate SOL price
+    const profitInSol = profitUsd / SOL_PRICE_USD;
+    const tipSol = Math.min(
+      profitInSol * 0.30, // Max 30% of profit
+      0.05 // Cap at 0.05 SOL (~$5)
+    );
+    const tipLamports = Math.max(
+      1_000_000, // Min 0.001 SOL
+      Math.floor(tipSol * LAMPORTS_PER_SOL)
+    );
+    const tipUsd = (tipLamports / LAMPORTS_PER_SOL) * SOL_PRICE_USD;
+    const netProfitUsd = profitUsd - tipUsd;
+    
+    console.log(`   💸 Jito tip: ${(tipLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL (~$${tipUsd.toFixed(2)})`);
+    console.log(`   💰 Net profit after tip: $${netProfitUsd.toFixed(2)}`);
 
     instructions.push(SystemProgram.transfer({
       fromPubkey: this.keypair.publicKey,

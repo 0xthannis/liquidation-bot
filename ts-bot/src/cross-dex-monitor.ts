@@ -87,8 +87,8 @@ export class CrossDexMonitor {
   private connection: Connection;
   private subscriptionId: number | null = null;
   private onOpportunity: OpportunityCallback | null = null;
-  private minSpreadPercent: number = 0.5; // 0.5% minimum spread to attempt execution
-  private minSwapUsd: number = 100000; // Only react to swaps >$100k
+  private minSpreadPercent: number = 0.3; // 0.3% minimum spread (covers ~0.1% slippage per DEX + fees)
+  private minSwapUsd: number = 50000; // React to swaps >$50k (more opportunities)
   private isRunning: boolean = false;
   
   // Rate limiting and caching
