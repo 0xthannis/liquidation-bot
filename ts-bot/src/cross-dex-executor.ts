@@ -460,7 +460,7 @@ export class CrossDexExecutor {
 
   private async buildAndExecuteTransaction(
     reserve: KaminoReserve,
-    flashAmount: bigint,
+    flashAmount: BN,
     swapIx1: SwapInstructions,
     swapIx2: SwapInstructions,
     profitUsd: number,
