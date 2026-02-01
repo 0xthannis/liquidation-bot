@@ -193,8 +193,10 @@ export class CrossDexMonitor {
 
     crossDexStats.largeSwapsDetected++;
 
-    console.log(`\n⚡ Cross-DEX Event: Large swap ~$${swapSizeEstimate.toLocaleString()} on ${sourceDex.toUpperCase()}`);
-    console.log(`   TX: ${logs.signature.slice(0, 16)}...`);
+    // Silent mode - only log every 10th swap to reduce spam
+    if (crossDexStats.largeSwapsDetected % 10 === 0) {
+      console.log(`   📊 ${crossDexStats.largeSwapsDetected} large swaps detected (checking silently...)`);
+    }
 
     // Check for arbitrage opportunity across ALL DEX pairs
     await this.checkAllDexPairs('SOL/USDC', swapSizeEstimate, sourceDex);
