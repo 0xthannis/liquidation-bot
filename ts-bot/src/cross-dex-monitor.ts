@@ -193,11 +193,7 @@ export class CrossDexMonitor {
 
     crossDexStats.largeSwapsDetected++;
 
-    // Silent mode - only log every 10th swap to reduce spam
-    if (crossDexStats.largeSwapsDetected % 10 === 0) {
-      console.log(`   📊 ${crossDexStats.largeSwapsDetected} large swaps detected (checking silently...)`);
-    }
-
+    // Silent mode - no log, just check for opportunities
     // Check for arbitrage opportunity across ALL DEX pairs
     await this.checkAllDexPairs('SOL/USDC', swapSizeEstimate, sourceDex);
   }
