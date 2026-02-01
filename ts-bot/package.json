@@ -6,10 +6,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "tsx src/flash-arb.ts",
-    "start:dual": "tsx src/main.ts",
-    "start:crossdex": "tsx src/main.ts",
-    "dev": "tsx src/flash-arb.ts"
+    "start": "tsx src/main.ts",
+    "start:old": "tsx src/flash-arb.ts",
+    "dev": "tsx src/main.ts"
   },
   "dependencies": {
     "@kamino-finance/klend-sdk": "^3.2.1",
