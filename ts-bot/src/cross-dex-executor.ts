@@ -109,10 +109,9 @@ export class CrossDexExecutor {
   }
 
   /**
-   * Calculate optimal flash loan amount based on:
-   * 1. Kamino available liquidity
-   * 2. DEX pool liquidity (to minimize slippage)
-   * 3. Spread percentage (larger spread = can use more)
+   * JARED MODE: Take EVERYTHING - big and small opportunities
+   * Dynamically adapt amount based on spread and liquidity
+   * Big spread = MAX borrow | Small spread = adapted amount
    */
   private async calculateOptimalAmounts(
     spreadPercent: number,
@@ -126,63 +125,78 @@ export class CrossDexExecutor {
     // Max we can borrow from Kamino (leave 10% buffer)
     const maxKaminoBorrow = kaminoLiquidityUsd * 0.9;
     
-    // Get DEX pool reserves to estimate max safe trade size
-    // For big pools (Raydium/Orca SOL-USDC), we can trade larger amounts
-    // Use 5% of pool for established pairs, slippage is manageable
-    let maxDexTrade = 500_000; // Default $500K - reasonable for major pairs
+    // Get DEX pool liquidity - be more aggressive for bigger spreads
+    let poolLiquidity = 10_000_000; // Default 10M
     
     try {
-      const POOL_PERCENT = 0.05; // 5% of pool liquidity
-      
       if (buyDex === 'raydium' || sellDex === 'raydium') {
         const balance = await this.connection.getTokenAccountBalance(POOLS.raydium.pcVault);
-        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * POOL_PERCENT);
+        poolLiquidity = Math.min(poolLiquidity, Number(balance.value.amount) / 1_000_000);
       }
-      
       if (buyDex === 'orca' || sellDex === 'orca') {
         const balance = await this.connection.getTokenAccountBalance(POOLS.orca.tokenVaultB);
-        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * POOL_PERCENT);
+        poolLiquidity = Math.min(poolLiquidity, Number(balance.value.amount) / 1_000_000);
       }
-      
-      // PumpSwap - use default, it's usually for memecoins with variable liquidity
     } catch (error) {
-      // Use default if pool fetch fails
+      poolLiquidity = 500_000; // Fallback
     }
     
-    // Minimum floor - don't go below $5K even for small pools
-    maxDexTrade = Math.max(maxDexTrade, 5_000);
+    // DYNAMIC POOL PERCENT based on spread - bigger spread = more aggressive
+    // Spread 0.5%+ = take 10% of pool (big opportunity)
+    // Spread 0.1%+ = take 5% of pool
+    // Spread < 0.1% = take 2% of pool (small opportunity, be careful)
+    let poolPercent: number;
+    if (spreadPercent >= 0.5) {
+      poolPercent = 0.10; // 10% - GO BIG
+    } else if (spreadPercent >= 0.1) {
+      poolPercent = 0.05; // 5%
+    } else {
+      poolPercent = 0.02; // 2% - careful on small spreads
+    }
+    
+    const maxDexTrade = poolLiquidity * poolPercent;
     
     // Calculate max safe amount
     const maxSafeAmount = Math.min(maxKaminoBorrow, maxDexTrade);
     
-    // Generate test amounts - PRIORITIZE BIG AMOUNTS
-    // Start from large amounts and go down if needed
-    const baseAmounts = spreadPercent >= 0.1
-      ? [2_000_000, 1_000_000, 500_000, 250_000, 100_000, 50_000] // Big spreads: start at $2M
-      : [1_000_000, 500_000, 250_000, 100_000, 50_000]; // Small spreads: start at $1M
+    // JARED MODE: Generate amounts from MAX down to minimum profitable
+    // Always include max, then scale down
+    const amounts: number[] = [];
     
-    // Filter to amounts within our limits
-    let validAmounts = baseAmounts.filter(a => a <= maxSafeAmount);
-    
-    // Always add the max safe amount as first option (biggest possible)
-    if (maxSafeAmount >= 50_000 && !validAmounts.includes(Math.floor(maxSafeAmount))) {
-      validAmounts = [Math.floor(maxSafeAmount), ...validAmounts];
+    // Start with MAX
+    if (maxSafeAmount >= 1000) {
+      amounts.push(Math.floor(maxSafeAmount));
     }
     
-    // If no valid amounts, use max safe amount if >= $5K
-    if (validAmounts.length === 0 && maxSafeAmount >= 5_000) {
-      validAmounts = [Math.floor(maxSafeAmount)];
+    // Add scaled amounts: 75%, 50%, 25%, 10%
+    const scales = [0.75, 0.5, 0.25, 0.1];
+    for (const scale of scales) {
+      const scaled = Math.floor(maxSafeAmount * scale);
+      if (scaled >= 1000 && !amounts.includes(scaled)) {
+        amounts.push(scaled);
+      }
     }
     
-    // Safety check - return empty if still no valid amounts
+    // Add fixed amounts if they fit
+    const fixedAmounts = [500_000, 250_000, 100_000, 50_000, 25_000, 10_000, 5_000, 2_000, 1_000];
+    for (const fixed of fixedAmounts) {
+      if (fixed <= maxSafeAmount && !amounts.includes(fixed)) {
+        amounts.push(fixed);
+      }
+    }
+    
+    // Sort descending - try biggest first
+    amounts.sort((a, b) => b - a);
+    
+    // Keep top 8 amounts to test (performance)
+    const validAmounts = amounts.slice(0, 8);
+    
     if (validAmounts.length === 0) {
-      console.log(`   ⚠️ No valid amounts (Kamino: $${(kaminoLiquidityUsd || 0).toLocaleString()}, maxSafe: $${(maxSafeAmount || 0).toLocaleString()})`);
+      console.log(`   ⚠️ Pool too small (liquidity: $${poolLiquidity.toLocaleString()})`);
       return [];
     }
     
-    console.log(`   📊 Kamino: $${(kaminoLiquidityUsd || 0).toLocaleString()} | Max borrow: $${(maxSafeAmount || 0).toLocaleString()} | Testing: $${validAmounts[0].toLocaleString()}-$${validAmounts[validAmounts.length - 1].toLocaleString()}`);
+    console.log(`   🎯 JARED MODE: Spread ${spreadPercent.toFixed(3)}% → ${(poolPercent*100).toFixed(0)}% pool | Testing $${validAmounts[0].toLocaleString()} → $${validAmounts[validAmounts.length-1].toLocaleString()}`);
     
     return validAmounts;
   }
