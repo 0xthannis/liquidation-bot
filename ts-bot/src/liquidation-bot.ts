@@ -45,9 +45,8 @@ const KAMINO_PROGRAM_ID = new PublicKey('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYav
 // Configuration
 const CONFIG = {
   // Minimum profit in USD to execute liquidation
-  MIN_PROFIT_USD: 1.0,
-  // Maximum liquidation amount in USD
-  MAX_LIQUIDATION_USD: 10000,
+  MIN_PROFIT_USD: 0.5,
+  // NO MAX - liquidate as much as possible
   // Scan interval in ms
   SCAN_INTERVAL_MS: 5000,
   // Liquidation bonus threshold (5% = positions with LTV > 95%)
@@ -109,7 +108,7 @@ export class LiquidationBot {
     this.isRunning = true;
     console.log('\n🚀 Liquidation Bot started!');
     console.log(`   Min profit: $${CONFIG.MIN_PROFIT_USD}`);
-    console.log(`   Max liquidation: $${CONFIG.MAX_LIQUIDATION_USD}`);
+    console.log(`   Max liquidation: UNLIMITED 💰`);
     console.log(`   Scan interval: ${CONFIG.SCAN_INTERVAL_MS / 1000}s`);
     console.log(`   LTV threshold: ${CONFIG.UNHEALTHY_LTV_THRESHOLD * 100}%\n`);
 
@@ -249,7 +248,7 @@ export class LiquidationBot {
 
     // Calculate potential profit (liquidation bonus is typically 5%)
     const liquidationBonus = 0.05;
-    const maxLiquidationAmount = Math.min(borrowedValueUsd * 0.5, CONFIG.MAX_LIQUIDATION_USD); // Can liquidate up to 50%
+    const maxLiquidationAmount = borrowedValueUsd * 0.5; // Liquidate max 50% of debt (protocol limit)
     const potentialProfitUsd = maxLiquidationAmount * liquidationBonus;
 
     // Find best reserves to liquidate
