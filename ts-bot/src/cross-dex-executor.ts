@@ -572,33 +572,32 @@ export class CrossDexExecutor {
     console.log(`   ✅ Flash borrow added`);
 
     // SWAP 1: USDC -> SOL (buy on cheaper DEX)
-    console.log(`   📝 Step 3: Adding swap 1 (${swapIx1.setupInstructions?.length || 0} setup, 1 swap)...`);
+    const swap1IxCount = Array.isArray(swapIx1.swapInstruction) ? swapIx1.swapInstruction.length : 1;
+    console.log(`   📝 Step 3: Adding swap 1 (${swapIx1.setupInstructions?.length || 0} setup, ${swap1IxCount} swap)...`);
     try {
       for (const ix of swapIx1.setupInstructions || []) {
-        instructions.push(this.deserializeInstruction(ix));
+        instructions.push(...this.deserializeInstructions(ix));
       }
-      // Debug: log swapInstruction structure
-      console.log(`   🔍 swapInstruction: ${JSON.stringify(swapIx1.swapInstruction).slice(0, 200)}`);
-      instructions.push(this.deserializeInstruction(swapIx1.swapInstruction));
+      instructions.push(...this.deserializeInstructions(swapIx1.swapInstruction));
       if (swapIx1.cleanupInstruction) {
-        instructions.push(this.deserializeInstruction(swapIx1.cleanupInstruction));
+        instructions.push(...this.deserializeInstructions(swapIx1.cleanupInstruction));
       }
       console.log(`   ✅ Swap 1 added`);
     } catch (swap1Error: any) {
       console.log(`   ❌ Swap 1 failed: ${swap1Error.message}`);
-      console.log(`   🔍 Full swapIx1: ${JSON.stringify(Object.keys(swapIx1 || {}))}`);
       throw swap1Error;
     }
 
     // SWAP 2: SOL -> USDC (sell on more expensive DEX)
-    console.log(`   📝 Step 4: Adding swap 2 (${swapIx2.setupInstructions?.length || 0} setup, 1 swap)...`);
+    const swap2IxCount = Array.isArray(swapIx2.swapInstruction) ? swapIx2.swapInstruction.length : 1;
+    console.log(`   📝 Step 4: Adding swap 2 (${swapIx2.setupInstructions?.length || 0} setup, ${swap2IxCount} swap)...`);
     try {
       for (const ix of swapIx2.setupInstructions || []) {
-        instructions.push(this.deserializeInstruction(ix));
+        instructions.push(...this.deserializeInstructions(ix));
       }
-      instructions.push(this.deserializeInstruction(swapIx2.swapInstruction));
+      instructions.push(...this.deserializeInstructions(swapIx2.swapInstruction));
       if (swapIx2.cleanupInstruction) {
-        instructions.push(this.deserializeInstruction(swapIx2.cleanupInstruction));
+        instructions.push(...this.deserializeInstructions(swapIx2.cleanupInstruction));
       }
       console.log(`   ✅ Swap 2 added`);
     } catch (swap2Error: any) {
@@ -793,26 +792,18 @@ export class CrossDexExecutor {
   }
 
   private deserializeInstruction(instruction: any): TransactionInstruction {
-    // Jupiter API v6 can return instructions in different formats:
-    // 1. Object with programId, accounts, data
-    // 2. Array format [programIdIndex, accountIndices, data] (when part of compiled message)
-    
-    // Check if it's an array (compiled format) - keys are 0, 1, 2
-    if (Array.isArray(instruction) || (instruction[0] !== undefined && instruction.programId === undefined)) {
-      // This is a compiled instruction format, need to handle differently
-      // For now, throw a more informative error
-      throw new Error(`Instruction is in compiled array format: ${JSON.stringify(instruction).slice(0, 100)}`);
-    }
-    
-    // Standard object format
+    // Jupiter API v6 returns instructions with keys (not accounts), programId, data
     if (!instruction.programId) {
       throw new Error(`Missing programId in instruction: ${JSON.stringify(Object.keys(instruction))}`);
     }
-    if (!instruction.accounts) {
-      throw new Error(`Missing accounts in instruction: ${JSON.stringify(Object.keys(instruction))}`);
+    
+    // Jupiter uses 'keys' not 'accounts'
+    const accountsArray = instruction.keys || instruction.accounts;
+    if (!accountsArray) {
+      throw new Error(`Missing keys/accounts in instruction: ${JSON.stringify(Object.keys(instruction))}`);
     }
     
-    const keys = instruction.accounts.map((account: any, idx: number) => {
+    const keys = accountsArray.map((account: any, idx: number) => {
       // Handle both formats: string pubkey or object with pubkey field
       let pubkeyStr: string;
       if (typeof account === 'string') {
@@ -835,6 +826,14 @@ export class CrossDexExecutor {
       keys,
       data: Buffer.from(instruction.data, 'base64'),
     });
+  }
+  
+  // Helper to handle array of instructions or single instruction
+  private deserializeInstructions(instructionOrArray: any): TransactionInstruction[] {
+    if (Array.isArray(instructionOrArray)) {
+      return instructionOrArray.map(ix => this.deserializeInstruction(ix));
+    }
+    return [this.deserializeInstruction(instructionOrArray)];
   }
 }
 
