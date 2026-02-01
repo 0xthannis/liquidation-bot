@@ -192,59 +192,88 @@ export class LiquidationBot {
     if (!this.market) return [];
 
     try {
-      // Use SDK's method to get all obligations for the market
-      // This is more reliable than manual getProgramAccounts
-      const allObligations = await this.market.getAllObligationsForMarket();
+      // Direct RPC call to get all obligation accounts for this market
+      // Using discriminator for Obligation account type
+      const OBLIGATION_DISCRIMINATOR = [168, 206, 141, 106, 88, 76, 172, 167]; // Kamino obligation discriminator
       
-      // Filter to only get obligations with borrows (potential liquidation targets)
-      const obligationsWithBorrows = allObligations.filter(obl => 
-        obl && obl.borrows && obl.borrows.size > 0
+      const accounts = await this.connection.getProgramAccounts(
+        PROGRAM_ID,
+        {
+          filters: [
+            {
+              memcmp: {
+                offset: 0,
+                bytes: Buffer.from(OBLIGATION_DISCRIMINATOR).toString('base64'),
+              },
+            },
+            {
+              memcmp: {
+                offset: 8, // Market address after discriminator
+                bytes: KAMINO_MAIN_MARKET.toBase58(),
+              },
+            },
+          ],
+        }
       );
 
-      console.log(`   Found ${obligationsWithBorrows.length} obligations with active borrows`);
-      
-      return obligationsWithBorrows;
-    } catch (error) {
-      console.error('Error fetching obligations:', error);
-      
-      // Fallback: try getProgramAccounts without dataSize filter
-      try {
-        console.log('   Trying fallback method...');
-        const obligationAccounts = await this.connection.getProgramAccounts(
+      console.log(`   Found ${accounts.length} obligation accounts on-chain`);
+
+      if (accounts.length === 0) {
+        // Try alternative filter without discriminator
+        const altAccounts = await this.connection.getProgramAccounts(
           PROGRAM_ID,
           {
+            dataSlice: { offset: 0, length: 0 }, // Just get addresses
             filters: [
-              {
-                memcmp: {
-                  offset: 8, // After discriminator
-                  bytes: KAMINO_MAIN_MARKET.toBase58(),
-                },
-              },
+              { dataSize: 1856 }, // Kamino obligation size
             ],
           }
         );
-
-        const obligations: KaminoObligation[] = [];
-        const batchSize = 50;
+        console.log(`   Alt method found ${altAccounts.length} potential obligations`);
         
-        for (let i = 0; i < Math.min(obligationAccounts.length, 500); i += batchSize) {
-          const batch = obligationAccounts.slice(i, i + batchSize);
-          const results = await Promise.allSettled(
-            batch.map(acc => this.market!.getObligationByAddress(acc.pubkey))
-          );
-          
-          for (const result of results) {
-            if (result.status === 'fulfilled' && result.value && result.value.borrows.size > 0) {
-              obligations.push(result.value);
+        // Parse obligations in batches
+        const obligations: KaminoObligation[] = [];
+        for (let i = 0; i < Math.min(altAccounts.length, 200); i++) {
+          try {
+            const obl = await this.market!.getObligationByAddress(altAccounts[i].pubkey);
+            if (obl && obl.borrows && obl.borrows.size > 0) {
+              // Check if it belongs to our market
+              if (obl.state.lendingMarket.equals(KAMINO_MAIN_MARKET)) {
+                obligations.push(obl);
+              }
             }
+          } catch {
+            // Skip invalid
           }
         }
-        
         return obligations;
-      } catch (fallbackError) {
-        console.error('Fallback also failed:', fallbackError);
-        return [];
       }
+
+      // Parse found accounts
+      const obligations: KaminoObligation[] = [];
+      const batchSize = 20;
+      
+      for (let i = 0; i < Math.min(accounts.length, 300); i += batchSize) {
+        const batch = accounts.slice(i, i + batchSize);
+        
+        await Promise.all(batch.map(async (acc) => {
+          try {
+            const obl = await this.market!.getObligationByAddress(acc.pubkey);
+            if (obl && obl.borrows && obl.borrows.size > 0) {
+              obligations.push(obl);
+            }
+          } catch {
+            // Skip unparseable obligations
+          }
+        }));
+      }
+
+      console.log(`   Parsed ${obligations.length} obligations with active borrows`);
+      return obligations;
+
+    } catch (error: any) {
+      console.error('Error fetching obligations:', error.message);
+      return [];
     }
   }
 
