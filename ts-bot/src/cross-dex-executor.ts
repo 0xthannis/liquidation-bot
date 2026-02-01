@@ -299,7 +299,10 @@ export class CrossDexExecutor {
           const fee = amount * 1n / 100000n; // 0.001% Kamino fee
           const profit = Number(returned - amount - fee) / 1_000_000;
           
-          console.log(`   💰 $${amountUsd.toLocaleString()} → profit: $${profit.toFixed(2)} (DIRECT)`);
+          // Debug: show actual swap amounts
+          const solAmount = Number(swap1.expectedOutput) / 1e9;
+          const usdcReturned = Number(returned) / 1e6;
+          console.log(`   💰 $${amountUsd.toLocaleString()} → ${solAmount.toFixed(4)} SOL → $${usdcReturned.toFixed(2)} = profit: $${profit.toFixed(2)}`);
           
           if (profit > bestProfit) {
             bestProfit = profit;
