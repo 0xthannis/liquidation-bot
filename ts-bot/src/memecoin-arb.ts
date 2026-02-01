@@ -18,6 +18,13 @@ import {
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import fetch from 'node-fetch';
 import { recordTrade } from './api-server';
+import { 
+  createPumpSwapDirectSwap, 
+  findPumpSwapPool as findPumpPool,
+  getPumpSwapReserves,
+  createDirectSwapInstructions,
+  POOLS 
+} from './amm-swap';
 
 // ============== PROGRAM IDS ==============
 const PUMPSWAP_PROGRAM = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
