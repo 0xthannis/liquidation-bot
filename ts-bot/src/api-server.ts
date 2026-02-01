@@ -14,6 +14,9 @@ export interface BotStats {
   successfulTrades: number;
   failedTrades: number;
   skippedTrades: number;
+  notProfitableTrades: number; // NEW: permanent counter
+  noRouteTrades: number; // NEW: permanent counter
+  simulationFailedTrades: number; // NEW: permanent counter
   todayProfit: number;
   walletBalance: number;
   botStatus: 'running' | 'stopped' | 'error';
@@ -46,6 +49,9 @@ export const botStats: BotStats = {
   successfulTrades: 0,
   failedTrades: 0,
   skippedTrades: 0,
+  notProfitableTrades: 0,
+  noRouteTrades: 0,
+  simulationFailedTrades: 0,
   todayProfit: 0,
   walletBalance: 0,
   botStatus: 'running',
@@ -83,8 +89,14 @@ export function recordTrade(trade: Omit<TradeRecord, 'id' | 'timestamp'>) {
     if (trade.profitUsd > 0) {
       botStats.opportunitiesFound++;
     }
-  } else if (trade.status === 'failed' || trade.status === 'simulation_failed') {
+  } else if (trade.status === 'failed') {
     botStats.failedTrades++;
+  } else if (trade.status === 'simulation_failed') {
+    botStats.simulationFailedTrades++;
+  } else if (trade.status === 'not_profitable') {
+    botStats.notProfitableTrades++;
+  } else if (trade.status === 'no_route') {
+    botStats.noRouteTrades++;
   } else {
     botStats.skippedTrades++;
   }
