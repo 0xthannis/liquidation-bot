@@ -273,9 +273,10 @@ export class CrossDexMonitor {
       const outputMint = TOKENS[tokenB as keyof typeof TOKENS].toString();
       const amount = tokenA === 'SOL' ? 1_000_000_000 : 1_000_000; // 1 SOL or 1 USDC
       
+      const apiKey = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
       const response = await fetch(
         `https://api.jup.ag/quote/v1?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=50`,
-        { headers: { 'Accept': 'application/json' } }
+        { headers: { 'Accept': 'application/json', 'x-api-key': apiKey } }
       );
       
       if (!response.ok) {

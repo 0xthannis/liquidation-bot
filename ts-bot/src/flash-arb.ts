@@ -600,8 +600,10 @@ async function main() {
   console.log('║   Using Official Kamino SDK + Jupiter API                 ║');
   console.log('╚═══════════════════════════════════════════════════════════╝\n');
   
-  // Start API server for dashboard
-  startApiServer(3001);
+  // Start API server for dashboard (skip if running as child process)
+  if (process.env.SKIP_API_SERVER !== 'true') {
+    startApiServer(3001);
+  }
   
   // Load wallet
   const keypair = loadKeypair();

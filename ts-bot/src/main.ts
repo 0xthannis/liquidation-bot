@@ -51,7 +51,7 @@ function startRoundTripEngine(): void {
     cwd: process.cwd(),
     stdio: ['inherit', 'pipe', 'pipe'],
     shell: true,
-    env: process.env,
+    env: { ...process.env, SKIP_API_SERVER: 'true' },
   });
 
   // Pipe stdout with prefix
