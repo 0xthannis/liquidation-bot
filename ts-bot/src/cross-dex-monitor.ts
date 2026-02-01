@@ -51,11 +51,17 @@ const TOKENS = {
   BONK: new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
 };
 
-// No static pairs - focus only on newly discovered tokens for higher spreads
-const STATIC_TRADING_PAIRS: any[] = [];
+// Fallback static pairs (high volume memecoins with potential spreads)
+const STATIC_TRADING_PAIRS = [
+  { name: 'BONK/SOL', tokenA: 'BONK', tokenB: 'SOL', decimalsA: 5, decimalsB: 9, mintA: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', mintB: 'So11111111111111111111111111111111111111112' },
+  { name: 'WIF/SOL', tokenA: 'WIF', tokenB: 'SOL', decimalsA: 6, decimalsB: 9, mintA: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', mintB: 'So11111111111111111111111111111111111111112' },
+  { name: 'POPCAT/SOL', tokenA: 'POPCAT', tokenB: 'SOL', decimalsA: 9, decimalsB: 9, mintA: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', mintB: 'So11111111111111111111111111111111111111112' },
+  { name: 'MEW/SOL', tokenA: 'MEW', tokenB: 'SOL', decimalsA: 5, decimalsB: 9, mintA: 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5', mintB: 'So11111111111111111111111111111111111111112' },
+  { name: 'TRUMP/SOL', tokenA: 'TRUMP', tokenB: 'SOL', decimalsA: 6, decimalsB: 9, mintA: '6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN', mintB: 'So11111111111111111111111111111111111111112' },
+];
 
-// Dynamic trading pairs (discovered tokens only)
-let TRADING_PAIRS: any[] = [];
+// Dynamic trading pairs (static + discovered)
+let TRADING_PAIRS = [...STATIC_TRADING_PAIRS];
 
 // Cross-DEX specific stats
 export interface CrossDexStats {
