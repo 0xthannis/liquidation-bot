@@ -522,34 +522,50 @@ export class CrossDexMonitor {
     try {
       // Find pair config for decimals and mints
       const pairConfig = TRADING_PAIRS.find(p => p.tokenA === tokenA && p.tokenB === tokenB);
-      if (!pairConfig) return null;
+      if (!pairConfig) {
+        console.log(`   ⚠️ No pair config for ${tokenA}/${tokenB}`);
+        return null;
+      }
       
       // Use mintA/mintB from pair config (supports dynamic tokens)
       const inputMint = pairConfig.mintA;
       const outputMint = pairConfig.mintB;
       const inputDecimals = pairConfig.decimalsA;
       const outputDecimals = pairConfig.decimalsB;
-      const amount = Math.pow(10, inputDecimals); // 1 unit of tokenA
+      
+      // Use larger amount for better precision (1000 units instead of 1)
+      const amount = Math.pow(10, inputDecimals) * 1000; // 1000 units of tokenA
       
       const apiKey = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
-      const response = await fetch(
-        `https://api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=50`,
-        { headers: { 'Accept': 'application/json', 'x-api-key': apiKey } }
-      );
+      const url = `https://api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${Math.floor(amount)}&slippageBps=50`;
+      
+      const response = await fetch(url, { 
+        headers: { 'Accept': 'application/json', 'x-api-key': apiKey } 
+      });
       
       if (!response.ok) {
+        const text = await response.text();
+        console.log(`   ⚠️ Jupiter API error for ${tokenA}: ${response.status} - ${text.slice(0, 100)}`);
         return null;
       }
       
-      const data = await response.json() as { outAmount?: string };
+      const data = await response.json() as { outAmount?: string; error?: string };
       
-      if (data.outAmount) {
-        // Price = outAmount / 10^outputDecimals (price of 1 tokenA in tokenB)
-        return parseInt(data.outAmount) / Math.pow(10, outputDecimals);
+      if (data.error) {
+        console.log(`   ⚠️ Jupiter error for ${tokenA}: ${data.error}`);
+        return null;
       }
       
+      if (data.outAmount) {
+        // Price = (outAmount / 10^outputDecimals) / 1000 (since we used 1000 units)
+        const price = (parseInt(data.outAmount) / Math.pow(10, outputDecimals)) / 1000;
+        return price;
+      }
+      
+      console.log(`   ⚠️ No outAmount for ${tokenA}`);
       return null;
     } catch (err) {
+      console.log(`   ⚠️ Fetch error for ${tokenA}: ${err}`);
       return null;
     }
   }
