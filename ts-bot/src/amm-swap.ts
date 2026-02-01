@@ -312,6 +312,80 @@ export function calculateSwapOutput(
   return numerator / denominator;
 }
 
+// ============== WHIRLPOOL CONCENTRATED LIQUIDITY CALCULATION ==============
+// For Orca Whirlpool, we need to use the concentrated liquidity formula
+// This is a simplified version that assumes swap stays within one tick range
+export async function calculateWhirlpoolSwapOutput(
+  connection: Connection,
+  amountIn: bigint,
+  swapDirection: 'SOL_TO_USDC' | 'USDC_TO_SOL'
+): Promise<bigint | null> {
+  try {
+    const pool = POOLS.orca;
+    const whirlpoolAccount = await connection.getAccountInfo(pool.poolId);
+    if (!whirlpoolAccount) return null;
+
+    // Read Whirlpool state
+    // Offset 65: sqrtPrice (u128 = 16 bytes)
+    // Offset 81: liquidity (u128 = 16 bytes)
+    const sqrtPriceLow = whirlpoolAccount.data.readBigUInt64LE(65);
+    const sqrtPriceHigh = whirlpoolAccount.data.readBigUInt64LE(73);
+    const sqrtPriceX64 = sqrtPriceLow + (sqrtPriceHigh << 64n);
+    
+    const liquidityLow = whirlpoolAccount.data.readBigUInt64LE(81);
+    const liquidityHigh = whirlpoolAccount.data.readBigUInt64LE(89);
+    const liquidity = liquidityLow + (liquidityHigh << 64n);
+
+    // Fee rate: 0.3% for this pool (30 basis points)
+    const feeRate = 30n; // basis points
+    const FEE_RATE_MUL_VALUE = 10000n;
+    
+    // Apply fee to input
+    const amountInAfterFee = amountIn * (FEE_RATE_MUL_VALUE - feeRate) / FEE_RATE_MUL_VALUE;
+
+    // Concentrated liquidity swap formula:
+    // For SOL -> USDC (a_to_b = true):
+    //   delta_b = L * (sqrt_P_current - sqrt_P_new)
+    //   sqrt_P_new = sqrt_P_current - delta_a * sqrt_P_current^2 / L
+    // For USDC -> SOL (a_to_b = false):
+    //   delta_a = L * (1/sqrt_P_new - 1/sqrt_P_current)
+    //   sqrt_P_new = L * sqrt_P_current / (L - delta_b * sqrt_P_current)
+
+    // Use floating point for the complex math, then convert back
+    const Q64 = 2n ** 64n;
+    const sqrtPriceFloat = Number(sqrtPriceX64) / Number(Q64);
+    const liquidityFloat = Number(liquidity);
+    const amountInFloat = Number(amountInAfterFee);
+
+    let amountOut: number;
+
+    if (swapDirection === 'SOL_TO_USDC') {
+      // SOL (9 decimals) -> USDC (6 decimals)
+      // a_to_b = true, token A = SOL, token B = USDC
+      // delta_b = L * (sqrt_P_current - sqrt_P_new)
+      // sqrt_P_new = sqrt_P_current * L / (L + delta_a * sqrt_P_current)
+      const sqrtPriceNew = sqrtPriceFloat * liquidityFloat / (liquidityFloat + amountInFloat * sqrtPriceFloat);
+      amountOut = liquidityFloat * (sqrtPriceFloat - sqrtPriceNew);
+      // Adjust for decimals: USDC output is in 6 decimals
+    } else {
+      // USDC (6 decimals) -> SOL (9 decimals)
+      // a_to_b = false, token A = SOL, token B = USDC
+      // delta_a = L * (1/sqrt_P_new - 1/sqrt_P_current)
+      // sqrt_P_new = sqrt_P_current + delta_b / L
+      const sqrtPriceNew = sqrtPriceFloat + amountInFloat / liquidityFloat;
+      amountOut = liquidityFloat * (1/sqrtPriceFloat - 1/sqrtPriceNew);
+      // Adjust for decimals: SOL output is in 9 decimals
+    }
+
+    // Return as bigint
+    if (amountOut <= 0) return null;
+    return BigInt(Math.floor(amountOut));
+  } catch (error) {
+    console.error('Error calculating Whirlpool swap:', error);
+    return null;
+  }
+}
+
 // ============== CREATE DIRECT SWAP ==============
 export async function createDirectSwapInstructions(
   connection: Connection,
@@ -322,16 +396,17 @@ export async function createDirectSwapInstructions(
   slippageBps: number = 50 // 0.5% default slippage
 ): Promise<{ instructions: TransactionInstruction[]; expectedOutput: bigint } | null> {
   try {
-    // Get pool reserves for output calculation
-    let reserveIn: bigint, reserveOut: bigint;
+    let expectedOutput: bigint;
     
     if (dex === 'raydium') {
+      // Raydium: constant product AMM (x * y = k)
       const raydiumPool = POOLS.raydium;
       const [coinVault, pcVault] = await Promise.all([
         connection.getTokenAccountBalance(raydiumPool.coinVault),
         connection.getTokenAccountBalance(raydiumPool.pcVault),
       ]);
       
+      let reserveIn: bigint, reserveOut: bigint;
       if (swapDirection === 'SOL_TO_USDC') {
         reserveIn = BigInt(coinVault.value.amount);
         reserveOut = BigInt(pcVault.value.amount);
@@ -339,25 +414,15 @@ export async function createDirectSwapInstructions(
         reserveIn = BigInt(pcVault.value.amount);
         reserveOut = BigInt(coinVault.value.amount);
       }
-    } else {
-      const orcaPool = POOLS.orca;
-      const [vaultA, vaultB] = await Promise.all([
-        connection.getTokenAccountBalance(orcaPool.tokenVaultA),
-        connection.getTokenAccountBalance(orcaPool.tokenVaultB),
-      ]);
       
-      if (swapDirection === 'SOL_TO_USDC') {
-        reserveIn = BigInt(vaultA.value.amount);
-        reserveOut = BigInt(vaultB.value.amount);
-      } else {
-        reserveIn = BigInt(vaultB.value.amount);
-        reserveOut = BigInt(vaultA.value.amount);
-      }
+      // Raydium fee: 0.25%
+      expectedOutput = calculateSwapOutput(amountIn, reserveIn, reserveOut, 25n);
+    } else {
+      // Orca Whirlpool: concentrated liquidity AMM
+      const whirlpoolOutput = await calculateWhirlpoolSwapOutput(connection, amountIn, swapDirection);
+      if (!whirlpoolOutput) return null;
+      expectedOutput = whirlpoolOutput;
     }
-
-    // Calculate expected output
-    const feeNumerator = dex === 'raydium' ? 25n : 30n; // Raydium 0.25%, Orca 0.3%
-    const expectedOutput = calculateSwapOutput(amountIn, reserveIn, reserveOut, feeNumerator);
     
     // Apply slippage
     const minOutput = expectedOutput * BigInt(10000 - slippageBps) / 10000n;

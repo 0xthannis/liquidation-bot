@@ -273,8 +273,9 @@ export class CrossDexExecutor {
       for (const amountUsd of testAmounts) {
         const amount = BigInt(Math.floor(amountUsd * 1_000_000)); // USDC amount (6 decimals)
         
+        // Direct AMM for Raydium + Orca (now with proper Whirlpool calculation)
         if (USE_DIRECT_AMM && (buyDex === 'raydium' || buyDex === 'orca') && (sellDex === 'raydium' || sellDex === 'orca')) {
-          // DIRECT AMM SWAP - Much lower fees!
+          // DIRECT AMM SWAP - Raydium (constant product) + Orca (concentrated liquidity)
           const swap1 = await createDirectSwapInstructions(
             this.connection,
             this.keypair.publicKey,
