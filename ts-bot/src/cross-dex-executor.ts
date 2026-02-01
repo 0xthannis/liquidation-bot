@@ -157,18 +157,23 @@ export class CrossDexExecutor {
     // Calculate max safe amount
     const maxSafeAmount = Math.min(maxKaminoBorrow, maxDexTrade);
     
-    // Generate test amounts dynamically based on available liquidity
-    // More amounts to test when spread is good
+    // Generate test amounts - PRIORITIZE BIG AMOUNTS
+    // Start from large amounts and go down if needed
     const baseAmounts = spreadPercent >= 0.1
-      ? [5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000]
-      : [5_000, 10_000, 25_000, 50_000, 100_000, 250_000];
+      ? [2_000_000, 1_000_000, 500_000, 250_000, 100_000, 50_000] // Big spreads: start at $2M
+      : [1_000_000, 500_000, 250_000, 100_000, 50_000]; // Small spreads: start at $1M
     
     // Filter to amounts within our limits
-    const validAmounts = baseAmounts.filter(a => a <= maxSafeAmount);
+    let validAmounts = baseAmounts.filter(a => a <= maxSafeAmount);
     
-    // Add the max safe amount if it's larger than our biggest test
-    if (maxSafeAmount > validAmounts[validAmounts.length - 1]) {
-      validAmounts.push(Math.floor(maxSafeAmount));
+    // Always add the max safe amount as first option (biggest possible)
+    if (maxSafeAmount >= 50_000 && !validAmounts.includes(Math.floor(maxSafeAmount))) {
+      validAmounts = [Math.floor(maxSafeAmount), ...validAmounts];
+    }
+    
+    // If no valid amounts (liquidity too low), use what we have
+    if (validAmounts.length === 0 && maxSafeAmount >= 10_000) {
+      validAmounts = [Math.floor(maxSafeAmount)];
     }
     
     console.log(`   📊 Kamino liquidity: $${kaminoLiquidityUsd.toLocaleString()}`);
