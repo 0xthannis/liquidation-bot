@@ -35,12 +35,70 @@ const JUPITER_API_KEY = process.env.JUPITER_API_KEY || '';
 // Kamino Main Market
 const KAMINO_MARKET_ADDRESS = '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF';
 
-// Token mints
+// Token mints - MASSIVE list for maximum opportunities
 const TOKENS: Record<string, string> = {
+  // Core tokens
   SOL: 'So11111111111111111111111111111111111111112',
   USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
   USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+  
+  // Liquid Staking Tokens (LSTs) - High volume, stable
   JitoSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
+  mSOL: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
+  bSOL: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1',
+  stSOL: '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
+  INF: '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm',
+  jupSOL: 'jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v',
+  
+  // Memecoins - VERY volatile = MORE opportunities
+  BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+  WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+  POPCAT: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+  MEW: 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5',
+  BOME: 'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',
+  SLERF: '7BgBvyjrZX1YKz4oh9mjb8ZScatkkwb8DzFx7LoiVkM3',
+  MYRO: 'HhJpBhRRn4g56VsyLuT8DL5Bv31HkXqsrahTTUCZeZg4',
+  WEN: 'WENWENvqqNya429ubCdR81ZmD69brwQaaBYY6p3LCpk',
+  SAMO: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
+  
+  // DeFi tokens - Good liquidity
+  RAY: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+  ORCA: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+  JTO: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
+  JUP: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+  PYTH: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
+  MNDE: 'MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey',
+  LDO: 'HZRCwxP2Vq9PCpPXooayhJ2bxTB5AMqS52gsRkVjGxzL',
+  RENDER: 'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',
+  HNT: 'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux',
+  MOBILE: 'mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6',
+  IOT: 'iotEVVZLEywoTn1QdwNPddxPWszn3zFhEot3MfL9fns',
+  
+  // Stablecoins - For triangular arb
+  UXD: '7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT',
+  USDH: 'USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX',
+  PAI: 'Ea5SjE2Y6yvCeW5dYTn7PYMuW5ikXkvbGdcmSnXeaLjS',
+  
+  // Gaming/NFT tokens
+  ATLAS: 'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx',
+  POLIS: 'poLisWXnNRwC6oBu1vHiuKQzFjGL4XDSu4g9qjz9qVk',
+  DUST: 'DUSTawucrTsGU8hcqRdHDCbuYhCPADMLM2VcCb8VnFnQ',
+  FORGE: 'FoRGERiW7odcCBGU1bztZi16osPBHjxharvDathL5eds',
+  
+  // Other high-volume tokens
+  STEP: 'StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT',
+  SBR: 'Saber2gLauYim4Mvftnrasomsv6NvAuncvMEZwcLpD1',
+  COPE: '8HGyAAB1yoM1ttS7pXjHMa3dukTFGQggnFFH3hJZgzQh',
+  FIDA: 'EchesyfXePKdLtoiZSL8pBe8Myagyy8ZRqsACNCFGnvp',
+  MEDIA: 'ETAtLmCmsoiEEKfNrHKJ2kYy3MoABhU6NQvpSfij5tDs',
+  TULIP: 'TuLipcqtGVXP9XR62wM8WWCm6a9vhLs7T1uoWBk6FDs',
+  SLND: 'SLNDpmoWTVADgEdndyvWzroNL7zSi1dF9PC3xHGtPwp',
+  PORT: 'PoRTjZMPXb9T7dyU7tpLEZRQj7e6ssfAE62j2oQuc6y',
+  GENE: 'GENEtH5amGSi8kHAtQoezp1XEXwZJ8vcuePYnXdKrMYz',
+  DFL: 'DFL1zNkaGPWm1BqAVqRjCZvHmwTFrEaJtbzJWgseoNJh',
+  SHDW: 'SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y',
+  GST: 'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
+  GMT: '7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx',
 };
 
 // Jupiter API (requires free API key from portal.jup.ag)
@@ -577,21 +635,84 @@ async function main() {
   await market.loadReserves();
   console.log(`✅ ${market.reserves.size} reserves loaded\n`);
   
-  // Arbitrage configurations - BIGGER amounts = BIGGER profits
+  // Arbitrage configurations - MASSIVE list for maximum opportunities
   // Flash loans have NO collateral requirement - borrow as much as Kamino has liquidity
   const arbConfigs = [
-    // USDC flash loans - up to 1M USDC
+    // ============ USDC FLASH LOANS ============
+    // Core pairs - high volume
     { flash: 'USDC', swap: 'SOL', amounts: [10000n, 50000n, 100000n, 500000n, 1000000n] },
     { flash: 'USDC', swap: 'USDT', amounts: [10000n, 100000n, 500000n] },
-    { flash: 'USDC', swap: 'JitoSOL', amounts: [10000n, 50000n, 100000n] },
-    // SOL flash loans - up to 1000 SOL
+    
+    // LST pairs - very stable, good for arb
+    { flash: 'USDC', swap: 'JitoSOL', amounts: [10000n, 50000n, 100000n, 500000n] },
+    { flash: 'USDC', swap: 'mSOL', amounts: [10000n, 50000n, 100000n, 500000n] },
+    { flash: 'USDC', swap: 'bSOL', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'stSOL', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'jupSOL', amounts: [10000n, 50000n, 100000n] },
+    
+    // MEMECOINS - volatile = MORE opportunities!
+    { flash: 'USDC', swap: 'BONK', amounts: [5000n, 10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'WIF', amounts: [5000n, 10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'POPCAT', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'MEW', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'BOME', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'SLERF', amounts: [5000n, 10000n, 25000n] },
+    { flash: 'USDC', swap: 'WEN', amounts: [5000n, 10000n, 25000n] },
+    { flash: 'USDC', swap: 'SAMO', amounts: [5000n, 10000n, 25000n] },
+    
+    // DeFi tokens - good liquidity
+    { flash: 'USDC', swap: 'RAY', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'ORCA', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'JTO', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'JUP', amounts: [10000n, 50000n, 100000n, 500000n] },
+    { flash: 'USDC', swap: 'PYTH', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'RENDER', amounts: [10000n, 50000n, 100000n] },
+    { flash: 'USDC', swap: 'HNT', amounts: [10000n, 50000n, 100000n] },
+    
+    // Stablecoin triangular arb
+    { flash: 'USDC', swap: 'UXD', amounts: [50000n, 100000n, 500000n] },
+    { flash: 'USDC', swap: 'USDH', amounts: [50000n, 100000n, 500000n] },
+    
+    // Gaming tokens
+    { flash: 'USDC', swap: 'ATLAS', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'DUST', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'GMT', amounts: [10000n, 50000n, 100000n] },
+    
+    // Other DeFi
+    { flash: 'USDC', swap: 'MNDE', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'SLND', amounts: [5000n, 10000n, 50000n] },
+    { flash: 'USDC', swap: 'SHDW', amounts: [5000n, 10000n, 50000n] },
+    
+    // ============ SOL FLASH LOANS ============
+    // Core pairs
     { flash: 'SOL', swap: 'USDC', amounts: [10n, 50n, 100n, 500n, 1000n] },
-    { flash: 'SOL', swap: 'JitoSOL', amounts: [10n, 100n, 500n] },
+    { flash: 'SOL', swap: 'USDT', amounts: [10n, 50n, 100n, 500n] },
+    
+    // LST pairs - SOL<->LST very profitable!
+    { flash: 'SOL', swap: 'JitoSOL', amounts: [10n, 50n, 100n, 500n, 1000n] },
+    { flash: 'SOL', swap: 'mSOL', amounts: [10n, 50n, 100n, 500n, 1000n] },
+    { flash: 'SOL', swap: 'bSOL', amounts: [10n, 50n, 100n, 500n] },
+    { flash: 'SOL', swap: 'stSOL', amounts: [10n, 50n, 100n, 500n] },
+    { flash: 'SOL', swap: 'jupSOL', amounts: [10n, 50n, 100n, 500n] },
+    
+    // Memecoins via SOL
+    { flash: 'SOL', swap: 'BONK', amounts: [10n, 25n, 50n, 100n] },
+    { flash: 'SOL', swap: 'WIF', amounts: [10n, 25n, 50n, 100n] },
+    { flash: 'SOL', swap: 'POPCAT', amounts: [10n, 25n, 50n] },
+    { flash: 'SOL', swap: 'MEW', amounts: [10n, 25n, 50n] },
+    
+    // DeFi via SOL
+    { flash: 'SOL', swap: 'RAY', amounts: [10n, 50n, 100n] },
+    { flash: 'SOL', swap: 'JUP', amounts: [10n, 50n, 100n, 500n] },
+    { flash: 'SOL', swap: 'JTO', amounts: [10n, 50n, 100n] },
+    { flash: 'SOL', swap: 'PYTH', amounts: [10n, 50n, 100n] },
+    { flash: 'SOL', swap: 'RENDER', amounts: [10n, 50n, 100n] },
   ];
   
-  console.log('🔍 Starting arbitrage scanner...\n');
-  console.log('Pairs: USDC<->SOL, USDC<->USDT, USDC<->JitoSOL, SOL<->USDC, SOL<->JitoSOL');
-  console.log('Amounts: 10K to 1M USDC | 10 to 1000 SOL\n');
+  console.log('🔍 Starting MEGA arbitrage scanner...\n');
+  console.log(`📊 ${arbConfigs.length} pair configurations loaded!`);
+  console.log('Categories: Core, LSTs, Memecoins, DeFi, Stables, Gaming');
+  console.log('Flash tokens: USDC (up to 1M) | SOL (up to 1000)\n');
   
   let scanCount = 0;
   
