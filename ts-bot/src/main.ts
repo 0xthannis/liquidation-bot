@@ -47,7 +47,7 @@ async function startCrossDexEngine(connection: Connection, keypair: Keypair): Pr
   // Load Kamino market
   console.log('   Loading Kamino market...');
   const { PublicKey } = await import('@solana/web3.js');
-  const market = await KaminoMarket.load(connection, new PublicKey(KAMINO_MAIN_MARKET));
+  const market = await KaminoMarket.load(connection, new PublicKey(KAMINO_MAIN_MARKET), undefined as any);
 
   if (!market) {
     throw new Error('Failed to load Kamino market');

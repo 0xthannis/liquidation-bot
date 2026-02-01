@@ -16,10 +16,18 @@ import {
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { 
-  getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
-  getAccount
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
+
+// Helper: compute ATA address (compatible with all spl-token versions)
+function getATA(mint: PublicKey, owner: PublicKey): PublicKey {
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
 import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } from '@kamino-finance/klend-sdk';
 import Decimal from 'decimal.js';
 import fetch from 'node-fetch';
@@ -473,23 +481,23 @@ export class CrossDexExecutor {
     // Get user's USDC ATA
     const usdcMint = new PublicKey(TOKENS.USDC);
     const solMint = new PublicKey(TOKENS.SOL);
-    const userUsdcAta = await getAssociatedTokenAddress(usdcMint, this.keypair.publicKey);
-    const userSolAta = await getAssociatedTokenAddress(solMint, this.keypair.publicKey);
+    const userUsdcAta = getATA(usdcMint, this.keypair.publicKey);
+    const userSolAta = getATA(solMint, this.keypair.publicKey);
 
     // Get lending market authority
     const lendingMarketAuthority = await this.market.getLendingMarketAuthority();
 
     // Build flash loan instructions
-    const { flashBorrowIx, flashRepayIx } = getFlashLoanInstructions({
-      borrowIxIndex: 0, // Will be adjusted
-      userTransferAuthority: this.keypair.publicKey,
+    const { flashBorrowIxn, flashRepayIxn } = getFlashLoanInstructions({
+      borrowIxnIndex: 0, // Will be adjusted
+      walletPublicKey: this.keypair.publicKey,
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
       amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
       destinationAta: userUsdcAta,
-      referrerAccount: undefined,
-      referrerTokenState: undefined,
+      referrerAccount: this.keypair.publicKey, // Use wallet as placeholder
+      referrerTokenState: this.keypair.publicKey, // Use wallet as placeholder
       programId: PROGRAM_ID,
     });
 
@@ -546,7 +554,7 @@ export class CrossDexExecutor {
     const flashBorrowIndex = instructions.length;
 
     // FLASH BORROW
-    instructions.push(flashBorrowIx);
+    instructions.push(flashBorrowIxn);
 
     // SWAP 1: USDC -> SOL (buy on cheaper DEX)
     for (const ix of swapIx1.setupInstructions || []) {
@@ -567,19 +575,19 @@ export class CrossDexExecutor {
     }
 
     // FLASH REPAY with correct borrow index
-    const { flashRepayIx: flashRepayIxCorrected } = getFlashLoanInstructions({
-      borrowIxIndex: flashBorrowIndex,
-      userTransferAuthority: this.keypair.publicKey,
+    const { flashRepayIxn: flashRepayIxnCorrected } = getFlashLoanInstructions({
+      borrowIxnIndex: flashBorrowIndex,
+      walletPublicKey: this.keypair.publicKey,
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
       amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
       destinationAta: userUsdcAta,
-      referrerAccount: undefined,
-      referrerTokenState: undefined,
+      referrerAccount: this.keypair.publicKey, // Use wallet as placeholder
+      referrerTokenState: this.keypair.publicKey, // Use wallet as placeholder
       programId: PROGRAM_ID,
     });
-    instructions.push(flashRepayIxCorrected);
+    instructions.push(flashRepayIxnCorrected);
 
     // Build versioned transaction (with retry for rate limiting)
     console.log(`   📦 Getting blockhash...`);
@@ -717,20 +725,29 @@ export class CrossDexExecutor {
   }
 
   private async ensureAta(instructions: TransactionInstruction[], mint: PublicKey): Promise<void> {
-    const ata = await getAssociatedTokenAddress(mint, this.keypair.publicKey);
+    const ata = getATA(mint, this.keypair.publicKey);
     
     try {
-      await getAccount(this.connection, ata);
+      const accountInfo = await this.connection.getAccountInfo(ata);
+      if (!accountInfo) {
+        // ATA doesn't exist, create it manually
+        instructions.push(
+          new TransactionInstruction({
+            programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+            keys: [
+              { pubkey: this.keypair.publicKey, isSigner: true, isWritable: true },
+              { pubkey: ata, isSigner: false, isWritable: true },
+              { pubkey: this.keypair.publicKey, isSigner: false, isWritable: false },
+              { pubkey: mint, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+              { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            ],
+            data: Buffer.alloc(0),
+          })
+        );
+      }
     } catch {
-      // ATA doesn't exist, create it
-      instructions.push(
-        createAssociatedTokenAccountInstruction(
-          this.keypair.publicKey,
-          ata,
-          this.keypair.publicKey,
-          mint
-        )
-      );
+      // Error checking, skip ATA creation
     }
   }
 

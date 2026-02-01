@@ -14,10 +14,39 @@ import {
 } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import BN from 'bn.js';
+
+// Helper: compute ATA address
+function getATA(mint: PublicKey, owner: PublicKey): PublicKey {
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
+
+// Helper: create ATA instruction
+function createAssociatedTokenAccountInstruction(
+  payer: PublicKey,
+  ata: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.alloc(0),
+  });
+}
 
 // ============== POOL ADDRESSES ==============
 // SOL/USDC pools on each DEX
@@ -72,8 +101,8 @@ export async function createRaydiumSwapInstruction(
   const instructions: TransactionInstruction[] = [];
 
   // Get user token accounts
-  const userSolAta = await getAssociatedTokenAddress(TOKENS.SOL, userPubkey);
-  const userUsdcAta = await getAssociatedTokenAddress(TOKENS.USDC, userPubkey);
+  const userSolAta = await getATA(TOKENS.SOL, userPubkey);
+  const userUsdcAta = await getATA(TOKENS.USDC, userPubkey);
 
   // Check if ATAs exist, create if needed
   const solAccount = await connection.getAccountInfo(userSolAta);
@@ -144,8 +173,8 @@ export async function createOrcaSwapInstruction(
   const instructions: TransactionInstruction[] = [];
 
   // Get user token accounts
-  const userSolAta = await getAssociatedTokenAddress(TOKENS.SOL, userPubkey);
-  const userUsdcAta = await getAssociatedTokenAddress(TOKENS.USDC, userPubkey);
+  const userSolAta = await getATA(TOKENS.SOL, userPubkey);
+  const userUsdcAta = await getATA(TOKENS.USDC, userPubkey);
 
   // Check if ATAs exist
   const solAccount = await connection.getAccountInfo(userSolAta);
@@ -423,8 +452,8 @@ export async function createPumpSwapBuyInstruction(
   const poolQuoteTokenAccount = new PublicKey(data.slice(139, 171));
 
   // User token accounts
-  const userTokenAta = await getAssociatedTokenAddress(tokenMint, userPubkey);
-  const userWsolAta = await getAssociatedTokenAddress(WSOL_MINT, userPubkey);
+  const userTokenAta = await getATA(tokenMint, userPubkey);
+  const userWsolAta = await getATA(WSOL_MINT, userPubkey);
 
   // Check if ATAs exist
   const tokenAccount = await connection.getAccountInfo(userTokenAta);
@@ -491,8 +520,8 @@ export async function createPumpSwapSellInstruction(
   const poolQuoteTokenAccount = new PublicKey(data.slice(139, 171));
 
   // User token accounts
-  const userTokenAta = await getAssociatedTokenAddress(tokenMint, userPubkey);
-  const userWsolAta = await getAssociatedTokenAddress(WSOL_MINT, userPubkey);
+  const userTokenAta = await getATA(tokenMint, userPubkey);
+  const userWsolAta = await getATA(WSOL_MINT, userPubkey);
 
   // Build sell instruction data
   // sell(base_amount_in: u64, min_quote_amount_out: u64)

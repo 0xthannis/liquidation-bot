@@ -16,11 +16,18 @@ import {
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { 
-  getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
-  createAssociatedTokenAccountInstruction,
-  getAccount
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
+
+// Helper: compute ATA address
+function getATA(mint: PublicKey, owner: PublicKey): PublicKey {
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
 import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } from '@kamino-finance/klend-sdk';
 import bs58 from 'bs58';
 import fetch from 'node-fetch';
@@ -154,12 +161,12 @@ async function getJupiterQuote(
       console.log(`   Quote error ${response.status}: ${text.slice(0, 80)}`);
       return null;
     }
-    const data = await response.json();
+    const data = await response.json() as any;
     if (data.error) {
       console.log(`   Quote API error: ${data.error}`);
       return null;
     }
-    return data;
+    return data as JupiterQuote;
   } catch (e: any) {
     console.log(`   Quote exception: ${e.message?.slice(0, 50)}`);
     return null;
@@ -190,12 +197,12 @@ async function getJupiterSwapInstructions(
       console.log(`   Swap instructions error: ${text.slice(0, 100)}`);
       return null;
     }
-    const data = await response.json();
+    const data = await response.json() as any;
     if (data.error) {
       console.log(`   Swap error: ${data.error}`);
       return null;
     }
-    return data;
+    return data as SwapInstructions;
   } catch (e: any) {
     console.log(`   Swap instructions exception: ${e.message?.slice(0, 80)}`);
     return null;
@@ -233,19 +240,25 @@ async function ensureAta(
   keypair: Keypair,
   mint: PublicKey
 ): Promise<{ ata: PublicKey; createIx: TransactionInstruction | null }> {
-  const ata = await getAssociatedTokenAddress(mint, keypair.publicKey);
+  const ata = getATA(mint, keypair.publicKey);
   try {
-    await getAccount(connection, ata);
-    return { ata, createIx: null };
-  } catch {
-    const createIx = createAssociatedTokenAccountInstruction(
-      keypair.publicKey,
-      ata,
-      keypair.publicKey,
-      mint
-    );
-    return { ata, createIx };
-  }
+    const accountInfo = await connection.getAccountInfo(ata);
+    if (accountInfo) return { ata, createIx: null };
+  } catch {}
+  // Create ATA instruction manually
+  const createIx = new TransactionInstruction({
+    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+    keys: [
+      { pubkey: keypair.publicKey, isSigner: true, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: keypair.publicKey, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.alloc(0),
+  });
+  return { ata, createIx };
 }
 
 // ============== FLASH LOAN ARBITRAGE WITH KAMINO SDK ==============
@@ -384,22 +397,22 @@ async function executeFlashLoanArbitrage(
   }
   
   // 4. Get user's ATAs for both tokens
-  const userFlashAta = await getAssociatedTokenAddress(new PublicKey(flashMint), keypair.publicKey);
-  const userSwapAta = await getAssociatedTokenAddress(new PublicKey(swapMint), keypair.publicKey);
+  const userFlashAta = getATA(new PublicKey(flashMint), keypair.publicKey);
+  const userSwapAta = getATA(new PublicKey(swapMint), keypair.publicKey);
   
   // 5. Build flash loan instructions using Kamino SDK
   const lendingMarketAuthority = await market.getLendingMarketAuthority();
   
-  const { flashBorrowIx, flashRepayIx } = getFlashLoanInstructions({
-    borrowIxIndex: 0, // Will be adjusted below
-    userTransferAuthority: keypair.publicKey,
+  const { flashBorrowIxn, flashRepayIxn } = getFlashLoanInstructions({
+    borrowIxnIndex: 0, // Will be adjusted below
+    walletPublicKey: keypair.publicKey,
     lendingMarketAuthority,
     lendingMarketAddress: market.getAddress(),
     reserve,
-    amountLamports: flashLoanAmount,
+    amountLamports: flashLoanAmount as any,
     destinationAta: userFlashAta,
-    referrerAccount: undefined,
-    referrerTokenState: undefined,
+    referrerAccount: keypair.publicKey,
+    referrerTokenState: keypair.publicKey,
     programId: PROGRAM_ID,
   });
   
@@ -454,7 +467,7 @@ async function executeFlashLoanArbitrage(
   const flashBorrowIndex = instructions.length;
   
   // FLASH BORROW
-  instructions.push(flashBorrowIx);
+  instructions.push(flashBorrowIxn);
   
   // SWAP 1: flashToken -> swapToken
   for (const ix of swapIx1.setupInstructions || []) {
@@ -476,19 +489,19 @@ async function executeFlashLoanArbitrage(
   
   // FLASH REPAY - need to rebuild with correct borrow index
   // Note: Kamino SDK calculates the fee internally, we pass the original borrow amount
-  const { flashRepayIx: flashRepayIxCorrected } = getFlashLoanInstructions({
-    borrowIxIndex: flashBorrowIndex,
-    userTransferAuthority: keypair.publicKey,
+  const { flashRepayIxn: flashRepayIxnCorrected } = getFlashLoanInstructions({
+    borrowIxnIndex: flashBorrowIndex,
+    walletPublicKey: keypair.publicKey,
     lendingMarketAuthority,
     lendingMarketAddress: market.getAddress(),
     reserve,
-    amountLamports: flashLoanAmount, // Original amount - SDK adds fee
+    amountLamports: flashLoanAmount as any, // Original amount - SDK adds fee
     destinationAta: userFlashAta,
-    referrerAccount: undefined,
-    referrerTokenState: undefined,
+    referrerAccount: keypair.publicKey,
+    referrerTokenState: keypair.publicKey,
     programId: PROGRAM_ID,
   });
-  instructions.push(flashRepayIxCorrected);
+  instructions.push(flashRepayIxnCorrected);
   
   // 8. Build versioned transaction
   const blockhash = await connection.getLatestBlockhash('finalized');
@@ -626,7 +639,7 @@ async function main() {
   
   // Load Kamino market
   console.log('\nLoading Kamino market...');
-  const market = await KaminoMarket.load(connection, new PublicKey(KAMINO_MARKET_ADDRESS));
+  const market = await KaminoMarket.load(connection, new PublicKey(KAMINO_MARKET_ADDRESS), undefined as any);
   if (!market) {
     console.error('❌ Failed to load Kamino market');
     return;
