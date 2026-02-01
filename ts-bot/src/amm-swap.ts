@@ -22,23 +22,13 @@ import BN from 'bn.js';
 // ============== POOL ADDRESSES ==============
 // SOL/USDC pools on each DEX
 export const POOLS = {
-  // Raydium AMM V4 SOL/USDC
+  // Raydium AMM V4 SOL/USDC (using SwapBaseInV2 - no OpenBook needed)
   raydium: {
     programId: new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8'),
     poolId: new PublicKey('58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2'),
     authority: new PublicKey('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1'),
-    openOrders: new PublicKey('HRk9CMrpq7Jn9sh7mzxE8CChHG8dneX9p475QKz4Fsfc'),
-    targetOrders: new PublicKey('CZza3Ej4Mc58MnxWA385itCC9jCo3L1D7zc3LKBqgUFf'),
     coinVault: new PublicKey('DQyrAcCrDXQ7NeoqGgDCZwBvWDcYmFCjSb9JtteuvPpz'), // SOL
     pcVault: new PublicKey('HLmqeL62xR1QoZ1HKKbXRrdN1p3phKpxRMb2VVopvBBz'), // USDC
-    serumProgram: new PublicKey('srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX'),
-    serumMarket: new PublicKey('8BnEgHoWFysVcuFFX7QztDmzuH8r5ZFvyP3sYwn1XTh6'),
-    serumBids: new PublicKey('5jWUncPNBMZJ3sTHKmMLszypVkoRK6bfEQMQUHweeQnh'),
-    serumAsks: new PublicKey('EaXdHx7x3mdGA38j5RSmKYSXMzAFzzUXCLNBEDXDn1d5'),
-    serumEventQueue: new PublicKey('8CvwxZ9Db6XbLD46NZwwmVDZZRDy7eydFcAGkXKh9axa'),
-    serumCoinVault: new PublicKey('CKxTHwM9fPMRRvZmFnFoqKNd9pQR21c5Aq9bh5h9oghX'),
-    serumPcVault: new PublicKey('6A5NHCj1yF6urc9wZNe6Bcjj4LVszQNj5DwAWG97yzMu'),
-    serumVaultSigner: new PublicKey('CTz5UMLQm2SRWHzQnU62Pi4yJqbNGjgRBHqqp6oDHfF7'),
   },
   // Orca Whirlpool SOL/USDC (64 tick spacing)
   orca: {
@@ -100,9 +90,10 @@ export async function createRaydiumSwapInstruction(
   }
 
   // Raydium swap instruction data
-  // Instruction 9 = swap
+  // Instruction 16 = SwapBaseInV2 (without OpenBook orderbook - simpler & faster)
+  // Data layout: instruction(1) + amount_in(8) + minimum_amount_out(8) = 17 bytes
   const dataLayout = Buffer.alloc(17);
-  dataLayout.writeUInt8(9, 0); // instruction index
+  dataLayout.writeUInt8(16, 0); // instruction index for SwapBaseInV2
   new BN(amountIn.toString()).toArrayLike(Buffer, 'le', 8).copy(dataLayout, 1);
   new BN(minimumAmountOut.toString()).toArrayLike(Buffer, 'le', 8).copy(dataLayout, 9);
 
@@ -110,22 +101,21 @@ export async function createRaydiumSwapInstruction(
     ? [userSolAta, userUsdcAta]
     : [userUsdcAta, userSolAta];
 
+  // SwapBaseInV2 accounts (simplified - no OpenBook):
+  // 0. Token program
+  // 1. AMM Account (writable)
+  // 2. AMM Authority
+  // 3. AMM coin vault (writable)
+  // 4. AMM pc vault (writable)
+  // 5. User source token (writable)
+  // 6. User destination token (writable)
+  // 7. User wallet (signer)
   const keys: AccountMeta[] = [
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: pool.poolId, isSigner: false, isWritable: true },
     { pubkey: pool.authority, isSigner: false, isWritable: false },
-    { pubkey: pool.openOrders, isSigner: false, isWritable: true },
-    { pubkey: pool.targetOrders, isSigner: false, isWritable: true },
     { pubkey: pool.coinVault, isSigner: false, isWritable: true },
     { pubkey: pool.pcVault, isSigner: false, isWritable: true },
-    { pubkey: pool.serumProgram, isSigner: false, isWritable: false },
-    { pubkey: pool.serumMarket, isSigner: false, isWritable: true },
-    { pubkey: pool.serumBids, isSigner: false, isWritable: true },
-    { pubkey: pool.serumAsks, isSigner: false, isWritable: true },
-    { pubkey: pool.serumEventQueue, isSigner: false, isWritable: true },
-    { pubkey: pool.serumCoinVault, isSigner: false, isWritable: true },
-    { pubkey: pool.serumPcVault, isSigner: false, isWritable: true },
-    { pubkey: pool.serumVaultSigner, isSigner: false, isWritable: false },
     { pubkey: userSource, isSigner: false, isWritable: true },
     { pubkey: userDest, isSigner: false, isWritable: true },
     { pubkey: userPubkey, isSigner: true, isWritable: false },
@@ -178,13 +168,25 @@ export async function createOrcaSwapInstruction(
   // Instruction discriminator for "swap" = [248, 198, 158, 145, 225, 117, 135, 200]
   const discriminator = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200]);
   
-  const dataLayout = Buffer.alloc(8 + 8 + 8 + 1 + 16);
+  // Data layout (from Whirlpool IDL):
+  // - discriminator: 8 bytes
+  // - amount: u64 (8 bytes)
+  // - other_amount_threshold: u64 (8 bytes) 
+  // - sqrt_price_limit: u128 (16 bytes)
+  // - amount_specified_is_input: bool (1 byte)
+  // - a_to_b: bool (1 byte)
+  // Total: 42 bytes
+  const dataLayout = Buffer.alloc(8 + 8 + 8 + 16 + 1 + 1);
   discriminator.copy(dataLayout, 0);
   new BN(amountIn.toString()).toArrayLike(Buffer, 'le', 8).copy(dataLayout, 8);
   new BN(minimumAmountOut.toString()).toArrayLike(Buffer, 'le', 8).copy(dataLayout, 16);
-  dataLayout.writeUInt8(aToB ? 1 : 0, 24);
-  // sqrt_price_limit (0 = no limit)
-  Buffer.alloc(16).copy(dataLayout, 25);
+  // sqrt_price_limit: u128 (0 = no limit) - for a_to_b use MIN, for b_to_a use MAX
+  const sqrtPriceLimit = aToB 
+    ? new BN('4295048016') // MIN_SQRT_PRICE
+    : new BN('79226673515401279992447579055'); // MAX_SQRT_PRICE
+  sqrtPriceLimit.toArrayLike(Buffer, 'le', 16).copy(dataLayout, 24);
+  dataLayout.writeUInt8(1, 40); // amount_specified_is_input = true (we specify input amount)
+  dataLayout.writeUInt8(aToB ? 1 : 0, 41); // a_to_b
 
   const [tokenOwnerAccountA, tokenOwnerAccountB, tokenVaultA, tokenVaultB] = aToB
     ? [userSolAta, userUsdcAta, pool.tokenVaultA, pool.tokenVaultB]
@@ -284,14 +286,13 @@ export async function createDirectSwapInstructions(
 ): Promise<{ instructions: TransactionInstruction[]; expectedOutput: bigint } | null> {
   try {
     // Get pool reserves for output calculation
-    const pool = dex === 'raydium' ? POOLS.raydium : POOLS.orca;
-    
     let reserveIn: bigint, reserveOut: bigint;
     
     if (dex === 'raydium') {
+      const raydiumPool = POOLS.raydium;
       const [coinVault, pcVault] = await Promise.all([
-        connection.getTokenAccountBalance(pool.coinVault as PublicKey),
-        connection.getTokenAccountBalance(pool.pcVault as PublicKey),
+        connection.getTokenAccountBalance(raydiumPool.coinVault),
+        connection.getTokenAccountBalance(raydiumPool.pcVault),
       ]);
       
       if (swapDirection === 'SOL_TO_USDC') {
@@ -302,9 +303,10 @@ export async function createDirectSwapInstructions(
         reserveOut = BigInt(coinVault.value.amount);
       }
     } else {
+      const orcaPool = POOLS.orca;
       const [vaultA, vaultB] = await Promise.all([
-        connection.getTokenAccountBalance((pool as any).tokenVaultA),
-        connection.getTokenAccountBalance((pool as any).tokenVaultB),
+        connection.getTokenAccountBalance(orcaPool.tokenVaultA),
+        connection.getTokenAccountBalance(orcaPool.tokenVaultB),
       ]);
       
       if (swapDirection === 'SOL_TO_USDC') {
