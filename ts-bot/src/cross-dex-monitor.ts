@@ -51,15 +51,11 @@ const TOKENS = {
   BONK: new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
 };
 
-// Static trading pairs to monitor
-const STATIC_TRADING_PAIRS = [
-  { name: 'SOL/USDC', tokenA: 'SOL', tokenB: 'USDC', decimalsA: 9, decimalsB: 6, mintA: 'So11111111111111111111111111111111111111112', mintB: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
-  { name: 'JUP/SOL', tokenA: 'JUP', tokenB: 'SOL', decimalsA: 6, decimalsB: 9, mintA: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', mintB: 'So11111111111111111111111111111111111111112' },
-  { name: 'BONK/SOL', tokenA: 'BONK', tokenB: 'SOL', decimalsA: 5, decimalsB: 9, mintA: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', mintB: 'So11111111111111111111111111111111111111112' },
-];
+// No static pairs - focus only on newly discovered tokens for higher spreads
+const STATIC_TRADING_PAIRS: any[] = [];
 
-// Dynamic trading pairs (static + discovered)
-let TRADING_PAIRS = [...STATIC_TRADING_PAIRS];
+// Dynamic trading pairs (discovered tokens only)
+let TRADING_PAIRS: any[] = [];
 
 // Cross-DEX specific stats
 export interface CrossDexStats {
