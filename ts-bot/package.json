@@ -1,30 +1,28 @@
 {
-  "name": "liquidation-bot",
-  "version": "2.0.0",
-  "description": "Kamino Lending Liquidation Bot",
-  "main": "dist/index.js",
+  "name": "kamino-liquidation-bot-pro",
+  "version": "1.0.0",
+  "description": "Professional Kamino Lending Liquidation Bot with Pyth WebSocket & Flash Loans",
+  "main": "src/liquidation-bot-pro.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "tsx src/main-liquidation.ts",
-    "start:arb": "tsx src/main.ts",
-    "dev": "tsx src/main-liquidation.ts"
+    "start": "tsx src/liquidation-bot-pro.ts",
+    "dev": "tsx src/liquidation-bot-pro.ts",
+    "api": "tsx src/api-server.ts",
+    "build": "tsc"
   },
   "dependencies": {
     "@kamino-finance/klend-sdk": "^3.2.1",
-    "@orca-so/common-sdk": "^0.7.0",
-    "@orca-so/whirlpools-sdk": "^0.18.0",
-    "@raydium-io/raydium-sdk-v2": "^0.2.32-alpha",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "bs58": "^6.0.0",
     "decimal.js": "^10.6.0",
     "dotenv": "^16.3.1",
-    "node-fetch": "^3.3.2"
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",
     "@types/node": "^20.10.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"
   }
