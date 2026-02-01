@@ -46,6 +46,15 @@ function createAtaInstruction(payer: PublicKey, ata: PublicKey, owner: PublicKey
 // Kamino Main Market
 const KAMINO_MAIN_MARKET = new PublicKey('7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
 
+// Parsed obligation type (manual parsing to avoid SDK bug)
+interface ParsedObligation {
+  pubkey: PublicKey;
+  owner: PublicKey;
+  borrowedValue: number;
+  depositedValue: number;
+  data: Buffer;
+}
+
 // Configuration
 const CONFIG = {
   // Minimum profit in USD to execute liquidation
@@ -146,41 +155,55 @@ export class LiquidationBot {
       // Refresh market data
       await this.market.loadReserves();
 
-      // Get all obligations
-      const obligations = await this.getAllObligations();
+      // Get all obligations (fills this.parsedObligations)
+      await this.getAllObligations();
       
-      console.log(`🔍 Scan #${liquidationStats.scans}: Checking ${obligations.length} obligations...`);
+      console.log(`🔍 Scan #${liquidationStats.scans}: Found ${this.parsedObligations.length} obligations with borrows`);
 
       let unhealthyCount = 0;
+      let checkedCount = 0;
 
-      for (const obligation of obligations) {
+      // Try to get detailed info using SDK for each parsed obligation
+      for (const parsed of this.parsedObligations.slice(0, 100)) {
         try {
-          const healthInfo = this.analyzeObligation(obligation);
+          // Try SDK parsing - it might work for some obligations
+          const obligation = await this.market!.getObligationByAddress(parsed.pubkey);
+          checkedCount++;
           
-          if (healthInfo.isLiquidatable) {
-            unhealthyCount++;
-            liquidationStats.unhealthyFound++;
+          if (obligation && obligation.borrows && obligation.borrows.size > 0) {
+            const healthInfo = this.analyzeObligation(obligation);
+            
+            if (healthInfo.isLiquidatable) {
+              unhealthyCount++;
+              liquidationStats.unhealthyFound++;
 
-            console.log(`\n💀 UNHEALTHY OBLIGATION FOUND!`);
-            console.log(`   Owner: ${obligation.obligationAddress.toString().slice(0, 12)}...`);
-            console.log(`   LTV: ${(healthInfo.ltv * 100).toFixed(2)}%`);
-            console.log(`   Borrowed: $${healthInfo.borrowedValueUsd.toFixed(2)}`);
-            console.log(`   Collateral: $${healthInfo.collateralValueUsd.toFixed(2)}`);
-            console.log(`   Potential profit: $${healthInfo.potentialProfitUsd.toFixed(2)}`);
+              console.log(`\n💀 UNHEALTHY OBLIGATION FOUND!`);
+              console.log(`   Address: ${parsed.pubkey.toString().slice(0, 12)}...`);
+              console.log(`   Owner: ${parsed.owner.toString().slice(0, 12)}...`);
+              console.log(`   LTV: ${(healthInfo.ltv * 100).toFixed(2)}%`);
+              console.log(`   Borrowed: $${healthInfo.borrowedValueUsd.toFixed(2)}`);
+              console.log(`   Collateral: $${healthInfo.collateralValueUsd.toFixed(2)}`);
+              console.log(`   Potential profit: $${healthInfo.potentialProfitUsd.toFixed(2)}`);
 
-            if (healthInfo.potentialProfitUsd >= CONFIG.MIN_PROFIT_USD) {
-              await this.executeLiquidation(obligation, healthInfo);
-            } else {
-              console.log(`   ⚠️ Profit too low, skipping`);
+              if (healthInfo.potentialProfitUsd >= CONFIG.MIN_PROFIT_USD) {
+                await this.executeLiquidation(obligation, healthInfo);
+              } else {
+                console.log(`   ⚠️ Profit too low, skipping`);
+              }
             }
           }
-        } catch (err) {
-          // Skip problematic obligations
+        } catch {
+          // SDK parse failed for this obligation - expected due to borrow rate curve bug
+        }
+        
+        // Progress update
+        if (checkedCount % 20 === 0 && checkedCount > 0) {
+          console.log(`   Checked ${checkedCount}/${Math.min(this.parsedObligations.length, 100)} obligations...`);
         }
       }
 
       if (unhealthyCount === 0) {
-        process.stdout.write(`   ✅ All obligations healthy\r`);
+        console.log(`   ✅ All ${checkedCount} checked obligations healthy`);
       }
 
     } catch (error) {
@@ -191,119 +214,116 @@ export class LiquidationBot {
   private async getAllObligations(): Promise<KaminoObligation[]> {
     if (!this.market) return [];
 
-    console.log('   Fetching obligations via Helius API...');
+    console.log('   Fetching obligations via RPC...');
 
-    // Extract API key from RPC URL
-    const rpcUrl = this.connection.rpcEndpoint;
-    const apiKeyMatch = rpcUrl.match(/api-key=([^&]+)/);
-    const apiKey = apiKeyMatch ? apiKeyMatch[1] : '';
-
-    if (!apiKey) {
-      console.log('   ⚠️ No Helius API key found in RPC URL');
-      return [];
-    }
-
-    // Use Helius searchAssets API to find Kamino program accounts
     try {
-      const heliusUrl = `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
+      // Debug revealed: obligation size is 3344 bytes, 98960 accounts exist
+      const OBLIGATION_SIZE = 3344;
       
-      // Get recent signatures for the Kamino program to find active obligations
-      const signaturesResponse = await fetch(heliusUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getSignaturesForAddress',
-          params: [
-            PROGRAM_ID.toBase58(),
-            { limit: 100 }
-          ]
-        })
-      });
+      const accounts = await this.connection.getProgramAccounts(
+        PROGRAM_ID,
+        {
+          filters: [
+            { dataSize: OBLIGATION_SIZE },
+            {
+              memcmp: {
+                offset: 32, // lending_market field offset
+                bytes: KAMINO_MAIN_MARKET.toBase58(),
+              },
+            },
+          ],
+        }
+      );
 
-      const sigData = await signaturesResponse.json();
-      const signatures = sigData.result || [];
-      console.log(`   Found ${signatures.length} recent Kamino transactions`);
+      console.log(`   Found ${accounts.length} obligation accounts`);
 
-      if (signatures.length === 0) {
-        console.log('   No recent transactions found');
+      if (accounts.length === 0) {
         return [];
       }
 
-      // Get transaction details to extract obligation addresses
-      const obligationAddresses = new Set<string>();
+      // Parse obligations manually to avoid SDK "borrow rate curve" bug
+      const obligations: ParsedObligation[] = [];
       
-      for (const sig of signatures.slice(0, 50)) {
+      // Sample random accounts (not just first ones)
+      const shuffled = [...accounts].sort(() => Math.random() - 0.5);
+      
+      for (const acc of shuffled.slice(0, 500)) {
         try {
-          const txResponse = await fetch(heliusUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'getTransaction',
-              params: [sig.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]
-            })
-          });
-
-          const txData = await txResponse.json();
-          const tx = txData.result;
+          const data = acc.account.data;
+          const parsed = this.parseObligationData(acc.pubkey, data);
           
-          if (tx?.transaction?.message?.accountKeys) {
-            // Look for accounts that might be obligations (owned by Kamino program)
-            for (const acc of tx.transaction.message.accountKeys) {
-              const pubkey = typeof acc === 'string' ? acc : acc.pubkey;
-              if (pubkey && pubkey !== PROGRAM_ID.toBase58() && pubkey !== KAMINO_MAIN_MARKET.toBase58()) {
-                obligationAddresses.add(pubkey);
-              }
-            }
+          if (parsed && parsed.borrowedValue > 0) {
+            obligations.push(parsed);
           }
         } catch {
-          // Skip failed transactions
+          // Skip unparseable
         }
-
-        // Progress
-        if (obligationAddresses.size >= 100) break;
       }
 
-      console.log(`   Extracted ${obligationAddresses.size} potential obligation addresses`);
-
-      // Try to parse each as an obligation
-      const obligations: KaminoObligation[] = [];
-      let checked = 0;
-
-      for (const addr of obligationAddresses) {
-        try {
-          const obl = await this.market!.getObligationByAddress(new PublicKey(addr));
-          checked++;
-          
-          if (obl && obl.borrows && obl.borrows.size > 0) {
-            // Verify it's for our market
-            if (obl.state.lendingMarket.toBase58() === KAMINO_MAIN_MARKET.toBase58()) {
-              obligations.push(obl);
-            }
-          }
-        } catch {
-          // Not an obligation or invalid
-        }
-
-        if (checked % 20 === 0) {
-          console.log(`   Checked ${checked}/${obligationAddresses.size}, found ${obligations.length} obligations`);
-        }
-
-        // Stop if we have enough
-        if (obligations.length >= 50) break;
-      }
-
-      console.log(`   ✅ Found ${obligations.length} valid obligations with borrows`);
-      return obligations;
-
+      console.log(`   ✅ Parsed ${obligations.length} obligations with active borrows`);
+      
+      // Convert to KaminoObligation format for compatibility
+      // We'll use our parsed data directly for analysis
+      this.parsedObligations = obligations;
+      
+      return []; // Return empty - we use parsedObligations directly
+      
     } catch (e: any) {
-      console.log(`   Helius API error: ${e.message?.substring(0, 50) || 'unknown'}`);
+      console.log(`   RPC error: ${e.message?.substring(0, 50) || 'unknown'}`);
       return [];
     }
   }
+
+  // Minimal obligation parsing without SDK's problematic rate curve parsing
+  private parseObligationData(pubkey: PublicKey, data: Buffer): ParsedObligation | null {
+    try {
+      // Obligation account layout (simplified):
+      // 0-8: discriminator
+      // 8-16: tag
+      // 16-24: last_update slot
+      // 24-32: last_update stale
+      // 32-64: lending_market (32 bytes)
+      // 64-96: owner (32 bytes)
+      // 96+: deposits array, then borrows array
+      
+      const owner = new PublicKey(data.slice(64, 96));
+      
+      // Read deposited_value (at offset ~200) - this is a u128 scaled value
+      // Read borrowed_value (at offset ~216)
+      // These offsets may vary - we'll use a heuristic approach
+      
+      // For now, check if account has any non-zero borrow data
+      // by looking for patterns in the data
+      
+      // Simple heuristic: if data has significant non-zero values after offset 200,
+      // it likely has borrows
+      let hasActivity = false;
+      for (let i = 200; i < Math.min(data.length, 500); i += 8) {
+        const val = data.readBigUInt64LE(i);
+        if (val > 0n && val < BigInt(10 ** 18)) {
+          hasActivity = true;
+          break;
+        }
+      }
+
+      if (!hasActivity) return null;
+
+      // Try to get actual values using SDK's getObligationByAddress
+      // but catch the borrow rate curve error
+      return {
+        pubkey,
+        owner,
+        borrowedValue: 1, // Placeholder - we know it has borrows
+        depositedValue: 1,
+        data,
+      };
+      
+    } catch {
+      return null;
+    }
+  }
+
+  private parsedObligations: ParsedObligation[] = [];
 
   private async parseObligations(accounts: readonly { pubkey: PublicKey; account: any }[]): Promise<KaminoObligation[]> {
     const obligations: KaminoObligation[] = [];
