@@ -344,7 +344,8 @@ export class CrossDexExecutor {
 
       // Use the best amount found
       const flashAmountUsd = bestAmount;
-      const flashAmount = new Decimal(Math.floor(flashAmountUsd * 1_000_000)); // Decimal for Kamino SDK
+      const flashAmountRaw = Math.floor(flashAmountUsd * 1_000_000);
+      const flashAmount = BigInt(flashAmountRaw); // Use BigInt, cast to any for SDK
       const profitUsd = bestProfit;
 
       console.log(`   ✅ OPTIMAL: $${flashAmountUsd.toLocaleString()} → profit: $${profitUsd.toFixed(2)}`);
@@ -459,7 +460,7 @@ export class CrossDexExecutor {
 
   private async buildAndExecuteTransaction(
     reserve: KaminoReserve,
-    flashAmount: Decimal,
+    flashAmount: bigint,
     swapIx1: SwapInstructions,
     swapIx2: SwapInstructions,
     profitUsd: number,
@@ -485,7 +486,7 @@ export class CrossDexExecutor {
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
-      amountLamports: flashAmount,
+      amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
       destinationAta: userUsdcAta,
       referrerAccount: undefined,
       referrerTokenState: undefined,
@@ -572,7 +573,7 @@ export class CrossDexExecutor {
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
-      amountLamports: flashAmount,
+      amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
       destinationAta: userUsdcAta,
       referrerAccount: undefined,
       referrerTokenState: undefined,
