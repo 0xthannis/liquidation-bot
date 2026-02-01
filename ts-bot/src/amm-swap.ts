@@ -238,17 +238,25 @@ export async function getPoolPrice(
     }
     
     if (dex === 'orca') {
-      // Fetch Orca Whirlpool reserves
+      // Orca Whirlpool uses sqrtPrice, not simple reserves
+      // sqrtPrice is stored at offset 65 in the Whirlpool account data (u128)
       const pool = POOLS.orca;
-      const [vaultAInfo, vaultBInfo] = await Promise.all([
-        connection.getTokenAccountBalance(pool.tokenVaultA),
-        connection.getTokenAccountBalance(pool.tokenVaultB),
-      ]);
+      const whirlpoolAccount = await connection.getAccountInfo(pool.poolId);
       
-      const solReserve = Number(vaultAInfo.value.amount) / 1e9;
-      const usdcReserve = Number(vaultBInfo.value.amount) / 1e6;
+      if (!whirlpoolAccount) return null;
       
-      return usdcReserve / solReserve;
+      // Read sqrtPrice from offset 65 (u128 = 16 bytes)
+      const sqrtPriceX64 = whirlpoolAccount.data.readBigUInt64LE(65);
+      const sqrtPriceX64High = whirlpoolAccount.data.readBigUInt64LE(73);
+      
+      // Combine to get full u128 sqrtPrice
+      const sqrtPrice = Number(sqrtPriceX64) + Number(sqrtPriceX64High) * 2**64;
+      
+      // Price = (sqrtPrice / 2^64)^2 * 10^(decimalsB - decimalsA)
+      // For SOL/USDC: decimalsB=6, decimalsA=9, so multiply by 10^-3
+      const price = Math.pow(sqrtPrice / 2**64, 2) * 1e-3;
+      
+      return price;
     }
     
     // PumpSwap - use Jupiter for price discovery for now
