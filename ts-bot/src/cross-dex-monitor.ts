@@ -137,16 +137,27 @@ export class CrossDexMonitor {
 
     this.isRunning = true;
 
-    // Subscribe to Raydium program logs (main liquidity source)
+    // Subscribe to Raydium program logs
     this.subscriptionId = this.connection.onLogs(
       DEX_PROGRAMS.raydium,
       async (logs: Logs) => {
-        await this.handleRaydiumLogs(logs);
+        await this.handleDexLogs(logs, 'raydium');
       },
       'confirmed'
     );
 
-    console.log(`✅ Cross-DEX Monitor subscribed (ID: ${this.subscriptionId})`);
+    // Subscribe to PumpSwap program logs
+    const pumpswapSubId = this.connection.onLogs(
+      DEX_PROGRAMS.pumpswap,
+      async (logs: Logs) => {
+        await this.handleDexLogs(logs, 'pumpswap');
+      },
+      'confirmed'
+    );
+
+    console.log(`✅ Cross-DEX Monitor subscribed:`);
+    console.log(`   - Raydium (ID: ${this.subscriptionId})`);
+    console.log(`   - PumpSwap (ID: ${pumpswapSubId})`);
   }
 
   async stop(): Promise<void> {
@@ -158,7 +169,7 @@ export class CrossDexMonitor {
     }
   }
 
-  private async handleRaydiumLogs(logs: Logs): Promise<void> {
+  private async handleDexLogs(logs: Logs, sourceDex: string): Promise<void> {
     crossDexStats.eventsDetected++;
     crossDexStats.lastEventTime = new Date().toISOString();
 
@@ -166,7 +177,9 @@ export class CrossDexMonitor {
     const isSwap = logs.logs.some(log => 
       log.includes('Instruction: Swap') || 
       log.includes('swap') ||
-      log.includes('ray_log')
+      log.includes('ray_log') ||
+      log.includes('Sell') ||
+      log.includes('Buy')
     );
 
     if (!isSwap) return;
@@ -180,11 +193,11 @@ export class CrossDexMonitor {
 
     crossDexStats.largeSwapsDetected++;
 
-    console.log(`\n⚡ Cross-DEX Event: Large swap ~$${swapSizeEstimate.toLocaleString()} on Raydium`);
+    console.log(`\n⚡ Cross-DEX Event: Large swap ~$${swapSizeEstimate.toLocaleString()} on ${sourceDex.toUpperCase()}`);
     console.log(`   TX: ${logs.signature.slice(0, 16)}...`);
 
-    // Check for arbitrage opportunity
-    await this.checkOpportunity('SOL/USDC', swapSizeEstimate);
+    // Check for arbitrage opportunity across ALL DEX pairs
+    await this.checkAllDexPairs('SOL/USDC', swapSizeEstimate, sourceDex);
   }
 
   private estimateSwapSize(logs: string[]): number {
@@ -204,6 +217,106 @@ export class CrossDexMonitor {
     // Default: assume medium-sized swap to not miss opportunities
     // We'll filter by actual price check anyway
     return 150000; // Assume $150k to trigger price check
+  }
+
+  private async checkAllDexPairs(pair: string, swapAmountUsd: number, sourceDex: string): Promise<void> {
+    const pool = POOLS[pair as keyof typeof POOLS];
+    if (!pool) return;
+
+    // Throttle: skip if too many pending checks or too soon
+    const now = Date.now();
+    if (this.pendingChecks >= this.maxPendingChecks) {
+      return;
+    }
+    if (now - this.lastPriceCheck < this.minCheckInterval) {
+      return;
+    }
+    
+    this.pendingChecks++;
+    this.lastPriceCheck = now;
+
+    try {
+      // Fetch prices from ALL DEXes
+      const [raydiumPrice, orcaPrice, pumpswapPrice] = await Promise.all([
+        this.getCachedPrice(pool.tokenA, pool.tokenB, 'raydium'),
+        this.getCachedPrice(pool.tokenA, pool.tokenB, 'orca'),
+        this.getCachedPrice(pool.tokenA, pool.tokenB, 'pumpswap'),
+      ]);
+
+      console.log(`📊 ${pair} prices:`);
+      console.log(`   Raydium:  ${raydiumPrice ? `$${raydiumPrice.toFixed(4)}` : '❌'}`);
+      console.log(`   Orca:     ${orcaPrice ? `$${orcaPrice.toFixed(4)}` : '❌'}`);
+      console.log(`   PumpSwap: ${pumpswapPrice ? `$${pumpswapPrice.toFixed(4)}` : '❌'}`);
+
+      // Find the best arbitrage opportunity across all pairs
+      const prices: { dex: string; price: number }[] = [];
+      if (raydiumPrice) prices.push({ dex: 'raydium', price: raydiumPrice });
+      if (orcaPrice) prices.push({ dex: 'orca', price: orcaPrice });
+      if (pumpswapPrice) prices.push({ dex: 'pumpswap', price: pumpswapPrice });
+
+      if (prices.length < 2) {
+        console.log(`   ⚠️ Need at least 2 DEX prices`);
+        return;
+      }
+
+      // Find min and max prices
+      const minPrice = prices.reduce((a, b) => a.price < b.price ? a : b);
+      const maxPrice = prices.reduce((a, b) => a.price > b.price ? a : b);
+      
+      const spreadPercent = ((maxPrice.price - minPrice.price) / minPrice.price) * 100;
+      const potentialProfitUsd = (spreadPercent / 100) * swapAmountUsd;
+      const direction = `${minPrice.dex}_to_${maxPrice.dex}`;
+
+      console.log(`   Best spread: ${minPrice.dex.toUpperCase()} → ${maxPrice.dex.toUpperCase()}`);
+      console.log(`   Spread: ${spreadPercent.toFixed(3)}% ($${potentialProfitUsd.toFixed(2)} potential)`);
+
+      if (spreadPercent < this.minSpreadPercent) {
+        console.log(`   Status: ❌ Not profitable (need >${this.minSpreadPercent}%)`);
+        crossDexStats.missedReasons.spreadTooLow++;
+        return;
+      }
+
+      // PROFITABLE OPPORTUNITY!
+      crossDexStats.opportunitiesFound++;
+      console.log(`\n💰 PROFITABLE OPPORTUNITY DETECTED!`);
+      console.log(`   Buy on: ${minPrice.dex.toUpperCase()} @ $${minPrice.price.toFixed(4)}`);
+      console.log(`   Sell on: ${maxPrice.dex.toUpperCase()} @ $${maxPrice.price.toFixed(4)}`);
+      console.log(`   Spread: ${spreadPercent.toFixed(3)}%`);
+
+      const opportunity: CrossDexOpportunity = {
+        pair,
+        dex1: minPrice.dex,
+        dex2: maxPrice.dex,
+        dex1Price: minPrice.price,
+        dex2Price: maxPrice.price,
+        spreadPercent,
+        potentialProfitUsd,
+        direction,
+        timestamp: Date.now(),
+        swapAmountUsd,
+      };
+
+      // Execute via callback
+      if (this.onOpportunity) {
+        console.log(`   Action: Attempting ${minPrice.dex} → ${maxPrice.dex} arbitrage...`);
+        this.onOpportunity(opportunity)
+          .then(success => {
+            if (success) {
+              console.log(`   Result: ✅ Success`);
+              crossDexStats.opportunitiesExecuted++;
+            } else {
+              console.log(`   Result: ❌ Failed`);
+              crossDexStats.opportunitiesMissed++;
+            }
+          })
+          .catch(err => {
+            console.log(`   Result: ❌ Error: ${err}`);
+            crossDexStats.opportunitiesMissed++;
+          });
+      }
+    } finally {
+      this.pendingChecks--;
+    }
   }
 
   private async checkOpportunity(pair: string, swapAmountUsd: number): Promise<void> {
@@ -312,7 +425,7 @@ export class CrossDexMonitor {
     }
   }
 
-  private async getCachedPrice(tokenA: string, tokenB: string, source: 'raydium' | 'orca'): Promise<number | null> {
+  private async getCachedPrice(tokenA: string, tokenB: string, source: string): Promise<number | null> {
     const cacheKey = `${tokenA}-${tokenB}-${source}`;
     const cached = this.priceCache.get(cacheKey);
     const now = Date.now();
