@@ -106,11 +106,11 @@ export class CrossDexMonitor {
   
   // Rate limiting and caching
   private priceCache: Map<string, PriceCache> = new Map();
-  private priceCacheTTL: number = 3000; // 3 seconds cache
+  private priceCacheTTL: number = 5000; // 5 seconds cache (reduced RPC calls)
   private lastPriceCheck: number = 0;
-  private minCheckInterval: number = 2000; // 2 seconds between checks
+  private minCheckInterval: number = 5000; // 5 seconds between checks (reduced rate limiting)
   private pendingChecks: number = 0;
-  private maxPendingChecks: number = 2; // Max concurrent checks
+  private maxPendingChecks: number = 1; // Only 1 concurrent check (avoid 429)
 
   constructor(connection: Connection) {
     this.connection = connection;
