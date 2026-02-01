@@ -159,9 +159,10 @@ export class CrossDexExecutor {
       console.log(`   Flash loan + fee: ${Number(totalToRepay) / 1_000_000} USDC`);
       console.log(`   Net profit: $${profitUsd.toFixed(2)}`);
 
-      // Check profitability (need at least $1 after all fees)
-      if (profitUsd < 1.0) {
-        console.log('   ❌ Not profitable after fees');
+      // Check profitability - execute if ANY profit (even $0.10)
+      // Flash loan is FREE so any profit > fees is worth it!
+      if (profitUsd < 0.10) {
+        console.log('   ❌ Not profitable (need > $0.10)');
         crossDexStats.missedReasons.spreadTooLow++;
         recordTrade({
           pair,
