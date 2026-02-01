@@ -101,7 +101,7 @@ export class CrossDexMonitor {
   private connection: Connection;
   private subscriptionId: number | null = null;
   private onOpportunity: OpportunityCallback | null = null;
-  private minSpreadPercent: number = 0.03; // 0.03% minimum - Direct AMM swaps have very low fees!
+  private minSpreadPercent: number = 0.60; // 0.60% minimum - need to cover Raydium 0.25% + Orca 0.3% + buffer
   private minSwapUsd: number = 10000; // React to swaps >$10k (many more opportunities)
   private isRunning: boolean = false;
   
