@@ -77,6 +77,12 @@ export interface CrossDexOpportunity {
   swapAmountUsd: number;
 }
 
+// Price cache to avoid rate limits
+interface PriceCache {
+  price: number;
+  timestamp: number;
+}
+
 export class CrossDexMonitor {
   private connection: Connection;
   private subscriptionId: number | null = null;
@@ -84,6 +90,14 @@ export class CrossDexMonitor {
   private minSpreadPercent: number = 0.5; // 0.5% minimum spread to attempt execution
   private minSwapUsd: number = 100000; // Only react to swaps >$100k
   private isRunning: boolean = false;
+  
+  // Rate limiting and caching
+  private priceCache: Map<string, PriceCache> = new Map();
+  private priceCacheTTL: number = 3000; // 3 seconds cache
+  private lastPriceCheck: number = 0;
+  private minCheckInterval: number = 2000; // 2 seconds between checks
+  private pendingChecks: number = 0;
+  private maxPendingChecks: number = 2; // Max concurrent checks
 
   constructor(connection: Connection) {
     this.connection = connection;
@@ -179,11 +193,23 @@ export class CrossDexMonitor {
     const pool = POOLS[pair as keyof typeof POOLS];
     if (!pool) return;
 
+    // Throttle: skip if too many pending checks or too soon
+    const now = Date.now();
+    if (this.pendingChecks >= this.maxPendingChecks) {
+      return; // Skip silently - too many pending
+    }
+    if (now - this.lastPriceCheck < this.minCheckInterval) {
+      return; // Skip silently - too soon
+    }
+    
+    this.pendingChecks++;
+    this.lastPriceCheck = now;
+
     try {
-      // Fetch prices from both DEXes
+      // Fetch prices (with caching)
       const [raydiumPrice, orcaPrice] = await Promise.all([
-        this.getRaydiumPrice(pool.raydium, pool.tokenA, pool.tokenB),
-        this.getOrcaPrice(pool.orca, pool.tokenA, pool.tokenB),
+        this.getCachedPrice(pool.tokenA, pool.tokenB, 'raydium'),
+        this.getCachedPrice(pool.tokenA, pool.tokenB, 'orca'),
       ]);
 
       if (raydiumPrice === null || orcaPrice === null) {
@@ -262,10 +288,39 @@ export class CrossDexMonitor {
 
     } catch (error) {
       console.log(`   ⚠️ Error checking opportunity: ${error}`);
+    } finally {
+      this.pendingChecks--;
     }
   }
 
-  private async getRaydiumPrice(poolAddress: PublicKey, tokenA: string, tokenB: string): Promise<number | null> {
+  private async getCachedPrice(tokenA: string, tokenB: string, source: 'raydium' | 'orca'): Promise<number | null> {
+    const cacheKey = `${tokenA}-${tokenB}-${source}`;
+    const cached = this.priceCache.get(cacheKey);
+    const now = Date.now();
+    
+    // Return cached price if still valid
+    if (cached && (now - cached.timestamp) < this.priceCacheTTL) {
+      // Add tiny variance for Orca to simulate different price
+      if (source === 'orca') {
+        return cached.price * (1 + (Math.random() * 0.002 - 0.001));
+      }
+      return cached.price;
+    }
+    
+    // Fetch fresh price
+    const price = await this.fetchPrice(tokenA, tokenB);
+    if (price !== null) {
+      this.priceCache.set(cacheKey, { price, timestamp: now });
+    }
+    
+    // Add variance for Orca
+    if (source === 'orca' && price !== null) {
+      return price * (1 + (Math.random() * 0.002 - 0.001));
+    }
+    return price;
+  }
+
+  private async fetchPrice(tokenA: string, tokenB: string): Promise<number | null> {
     try {
       // Use Jupiter Quote API to get price (no API key needed)
       // Get quote for 1 SOL -> USDC to derive SOL price
@@ -304,16 +359,6 @@ export class CrossDexMonitor {
       console.log(`   Quote fetch error: ${err}`);
       return null;
     }
-  }
-
-  private async getOrcaPrice(poolAddress: PublicKey, tokenA: string, tokenB: string): Promise<number | null> {
-    // Use same method but add slight variance to simulate Orca
-    const price = await this.getRaydiumPrice(poolAddress, tokenA, tokenB);
-    if (price) {
-      // Add tiny variance (-0.1% to +0.1%) to simulate Orca price difference
-      return price * (1 + (Math.random() * 0.002 - 0.001));
-    }
-    return null;
   }
 
   getStats(): CrossDexStats {
