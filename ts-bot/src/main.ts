@@ -31,9 +31,9 @@ let roundTripProcess: ChildProcess | null = null;
 let arbitrageEngine: ArbitrageEngine | null = null;
 
 async function loadWallet(): Promise<Keypair> {
-  const privateKey = process.env.PRIVATE_KEY;
+  const privateKey = process.env.WALLET_PRIVATE_KEY || process.env.PRIVATE_KEY;
   if (!privateKey) {
-    throw new Error('PRIVATE_KEY not found in environment');
+    throw new Error('WALLET_PRIVATE_KEY not found in environment');
   }
   
   const secretKey = bs58.decode(privateKey);
