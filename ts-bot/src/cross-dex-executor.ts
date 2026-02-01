@@ -176,9 +176,13 @@ export class CrossDexExecutor {
       validAmounts = [Math.floor(maxSafeAmount)];
     }
     
-    console.log(`   📊 Kamino liquidity: $${kaminoLiquidityUsd.toLocaleString()}`);
-    console.log(`   📊 Max safe borrow: $${maxSafeAmount.toLocaleString()}`);
-    console.log(`   📊 Testing ${validAmounts.length} amounts: $${validAmounts[0].toLocaleString()} - $${validAmounts[validAmounts.length - 1].toLocaleString()}`);
+    // Safety check - return empty if still no valid amounts
+    if (validAmounts.length === 0) {
+      console.log(`   ⚠️ No valid amounts (Kamino: $${(kaminoLiquidityUsd || 0).toLocaleString()}, maxSafe: $${(maxSafeAmount || 0).toLocaleString()})`);
+      return [];
+    }
+    
+    console.log(`   📊 Kamino: $${(kaminoLiquidityUsd || 0).toLocaleString()} | Max borrow: $${(maxSafeAmount || 0).toLocaleString()} | Testing: $${validAmounts[0].toLocaleString()}-$${validAmounts[validAmounts.length - 1].toLocaleString()}`);
     
     return validAmounts;
   }
