@@ -192,89 +192,115 @@ export class LiquidationBot {
     if (!this.market) return [];
 
     try {
-      // Direct RPC call to get all obligation accounts for this market
-      // Using discriminator for Obligation account type
-      const OBLIGATION_DISCRIMINATOR = [168, 206, 141, 106, 88, 76, 172, 167]; // Kamino obligation discriminator
+      // Use Kamino API to get liquidatable obligations directly
+      // This is much faster and more reliable than scanning all accounts
+      const apiUrl = 'https://api.kamino.finance/v2/lending/obligations?marketPubkey=7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF&status=unhealthy';
       
+      console.log('   Fetching from Kamino API...');
+      const response = await fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const unhealthyObligations = data.obligations || data || [];
+      
+      console.log(`   Kamino API: ${unhealthyObligations.length} unhealthy obligations`);
+      
+      // Convert API data to KaminoObligation objects
+      const obligations: KaminoObligation[] = [];
+      
+      for (const oblData of unhealthyObligations.slice(0, 50)) {
+        try {
+          const oblPubkey = new PublicKey(oblData.pubkey || oblData.obligationPubkey || oblData.address);
+          const obl = await this.market!.getObligationByAddress(oblPubkey);
+          if (obl) {
+            obligations.push(obl);
+          }
+        } catch {
+          // Skip if can't parse
+        }
+      }
+      
+      if (obligations.length > 0) {
+        console.log(`   Loaded ${obligations.length} unhealthy obligations from API`);
+        return obligations;
+      }
+      
+      // Fallback: scan recent obligations via RPC
+      console.log('   API returned 0, trying RPC scan...');
+      return await this.scanObligationsViaRpc();
+      
+    } catch (error: any) {
+      console.log(`   API error: ${error.message}, trying RPC scan...`);
+      return await this.scanObligationsViaRpc();
+    }
+  }
+  
+  private async scanObligationsViaRpc(): Promise<KaminoObligation[]> {
+    if (!this.market) return [];
+    
+    try {
+      // Get obligation accounts by size (Kamino obligations are ~1800-2000 bytes)
       const accounts = await this.connection.getProgramAccounts(
         PROGRAM_ID,
         {
           filters: [
-            {
-              memcmp: {
-                offset: 0,
-                bytes: Buffer.from(OBLIGATION_DISCRIMINATOR).toString('base64'),
-              },
-            },
-            {
-              memcmp: {
-                offset: 8, // Market address after discriminator
-                bytes: KAMINO_MAIN_MARKET.toBase58(),
-              },
-            },
+            { dataSize: 1800 }, // Try common obligation size
           ],
         }
       );
-
-      console.log(`   Found ${accounts.length} obligation accounts on-chain`);
-
+      
       if (accounts.length === 0) {
-        // Try alternative filter without discriminator
-        const altAccounts = await this.connection.getProgramAccounts(
+        // Try another size
+        const accounts2 = await this.connection.getProgramAccounts(
           PROGRAM_ID,
           {
-            dataSlice: { offset: 0, length: 0 }, // Just get addresses
             filters: [
-              { dataSize: 1856 }, // Kamino obligation size
+              { dataSize: 1856 },
             ],
           }
         );
-        console.log(`   Alt method found ${altAccounts.length} potential obligations`);
         
-        // Parse obligations in batches
-        const obligations: KaminoObligation[] = [];
-        for (let i = 0; i < Math.min(altAccounts.length, 200); i++) {
-          try {
-            const obl = await this.market!.getObligationByAddress(altAccounts[i].pubkey);
-            if (obl && obl.borrows && obl.borrows.size > 0) {
-              // Check if it belongs to our market
-              if (obl.state.lendingMarket.equals(KAMINO_MAIN_MARKET)) {
-                obligations.push(obl);
-              }
-            }
-          } catch {
-            // Skip invalid
-          }
+        if (accounts2.length === 0) {
+          console.log('   RPC scan found 0 accounts');
+          return [];
         }
-        return obligations;
-      }
-
-      // Parse found accounts
-      const obligations: KaminoObligation[] = [];
-      const batchSize = 20;
-      
-      for (let i = 0; i < Math.min(accounts.length, 300); i += batchSize) {
-        const batch = accounts.slice(i, i + batchSize);
         
-        await Promise.all(batch.map(async (acc) => {
-          try {
-            const obl = await this.market!.getObligationByAddress(acc.pubkey);
-            if (obl && obl.borrows && obl.borrows.size > 0) {
-              obligations.push(obl);
-            }
-          } catch {
-            // Skip unparseable obligations
-          }
-        }));
+        console.log(`   RPC found ${accounts2.length} potential obligations`);
+        return this.parseObligationAccounts(accounts2);
       }
-
-      console.log(`   Parsed ${obligations.length} obligations with active borrows`);
-      return obligations;
-
+      
+      console.log(`   RPC found ${accounts.length} potential obligations`);
+      return this.parseObligationAccounts(accounts);
+      
     } catch (error: any) {
-      console.error('Error fetching obligations:', error.message);
+      console.log(`   RPC scan error: ${error.message}`);
       return [];
     }
+  }
+  
+  private async parseObligationAccounts(accounts: readonly { pubkey: PublicKey; account: any }[]): Promise<KaminoObligation[]> {
+    const obligations: KaminoObligation[] = [];
+    
+    // Parse in small batches
+    for (let i = 0; i < Math.min(accounts.length, 100); i++) {
+      try {
+        const obl = await this.market!.getObligationByAddress(accounts[i].pubkey);
+        if (obl && obl.borrows && obl.borrows.size > 0) {
+          // Check if belongs to our market
+          if (obl.state.lendingMarket.toBase58() === KAMINO_MAIN_MARKET.toBase58()) {
+            obligations.push(obl);
+          }
+        }
+      } catch {
+        // Skip
+      }
+    }
+    
+    console.log(`   Parsed ${obligations.length} valid obligations`);
+    return obligations;
   }
 
   private analyzeObligation(obligation: KaminoObligation): {
