@@ -19,13 +19,19 @@ const DEX_PROGRAMS = {
   orca: new PublicKey('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc'), // Whirlpool
 };
 
-// Pool addresses
-const POOLS = {
+// Pool addresses (for direct price reading - fallback to Jupiter if not available)
+const POOLS: Record<string, any> = {
   'SOL/USDC': {
     raydium: new PublicKey('58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2'),
     orca: new PublicKey('HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ'),
-    tokenA: 'SOL',
-    tokenB: 'USDC',
+  },
+  'JUP/SOL': {
+    raydium: new PublicKey('BkLRfwsQeqFdvvLNgJFVWDJiTNU4BsPzLn8eFqFXrMzx'), // JUP/SOL Raydium
+    orca: new PublicKey('HcjZvfeSNJbNkfLD4eEcRBr96AD3w1GpmMppaeRZf7ur'), // JUP/SOL Orca Whirlpool
+  },
+  'BONK/SOL': {
+    raydium: new PublicKey('Hnt5TmTPpMx2Uf3APXFfsvMZfpqEvQmyByGwUvBPRey8'), // BONK/SOL Raydium
+    orca: new PublicKey('5raXu2iqomFiGe5uMHTYmUVCnSyaDrRMBodLgsbFB3CN'), // BONK/SOL Orca Whirlpool  
   },
 };
 
@@ -40,7 +46,16 @@ const DEX_PAIRS = [
 const TOKENS = {
   SOL: new PublicKey('So11111111111111111111111111111111111111112'),
   USDC: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+  JUP: new PublicKey('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'),
+  BONK: new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
 };
+
+// Trading pairs to monitor
+const TRADING_PAIRS = [
+  { name: 'SOL/USDC', tokenA: 'SOL', tokenB: 'USDC', decimalsA: 9, decimalsB: 6 },
+  { name: 'JUP/SOL', tokenA: 'JUP', tokenB: 'SOL', decimalsA: 6, decimalsB: 9 },
+  { name: 'BONK/SOL', tokenA: 'BONK', tokenB: 'SOL', decimalsA: 5, decimalsB: 9 },
+];
 
 // Cross-DEX specific stats
 export interface CrossDexStats {
@@ -195,8 +210,10 @@ export class CrossDexMonitor {
     crossDexStats.largeSwapsDetected++;
 
     // Silent mode - no log, just check for opportunities
-    // Check for arbitrage opportunity across ALL DEX pairs
-    await this.checkAllDexPairs('SOL/USDC', swapSizeEstimate, sourceDex);
+    // Check for arbitrage opportunity across ALL trading pairs
+    for (const pair of TRADING_PAIRS) {
+      await this.checkAllDexPairs(pair.name, swapSizeEstimate, sourceDex);
+    }
   }
 
   private estimateSwapSize(logs: string[]): number {
@@ -219,8 +236,8 @@ export class CrossDexMonitor {
   }
 
   private async checkAllDexPairs(pair: string, swapAmountUsd: number, sourceDex: string): Promise<void> {
-    const pool = POOLS[pair as keyof typeof POOLS];
-    if (!pool) return;
+    const pairConfig = TRADING_PAIRS.find(p => p.name === pair);
+    if (!pairConfig) return;
 
     // Throttle: skip if too many pending checks or too soon
     const now = Date.now();
@@ -235,10 +252,10 @@ export class CrossDexMonitor {
     this.lastPriceCheck = now;
 
     try {
-      // Fetch prices from Raydium & Orca only (PumpSwap is for memecoins, no SOL/USDC pool)
+      // Fetch prices from Raydium & Orca via Jupiter
       const [raydiumPrice, orcaPrice] = await Promise.all([
-        this.getCachedPrice(pool.tokenA, pool.tokenB, 'raydium'),
-        this.getCachedPrice(pool.tokenA, pool.tokenB, 'orca'),
+        this.getCachedPrice(pairConfig.tokenA, pairConfig.tokenB, 'raydium'),
+        this.getCachedPrice(pairConfig.tokenA, pairConfig.tokenB, 'orca'),
       ]);
 
       console.log(`📊 ${pair} prices:`);
@@ -443,17 +460,7 @@ export class CrossDexMonitor {
       return cached.price;
     }
     
-    // Use on-chain price for Raydium only (simple AMM)
-    // For Orca (CLMM), use Jupiter with longer cache
-    if (source === 'raydium') {
-      const price = await getPoolPrice(this.connection, 'raydium');
-      if (price !== null) {
-        this.priceCache.set(cacheKey, { price, timestamp: now });
-      }
-      return price;
-    }
-    
-    // For Orca, fetch via Jupiter (but cached for 10s)
+    // Use Jupiter for all pairs and DEXes (most reliable)
     const price = await this.fetchPrice(tokenA, tokenB);
     if (price !== null) {
       this.priceCache.set(cacheKey, { price, timestamp: now });
@@ -463,11 +470,15 @@ export class CrossDexMonitor {
 
   private async fetchPrice(tokenA: string, tokenB: string): Promise<number | null> {
     try {
-      // Use Jupiter Quote API to get price (no API key needed)
-      // Get quote for 1 SOL -> USDC to derive SOL price
+      // Find pair config for decimals
+      const pairConfig = TRADING_PAIRS.find(p => p.tokenA === tokenA && p.tokenB === tokenB);
+      if (!pairConfig) return null;
+      
       const inputMint = TOKENS[tokenA as keyof typeof TOKENS].toString();
       const outputMint = TOKENS[tokenB as keyof typeof TOKENS].toString();
-      const amount = tokenA === 'SOL' ? 1_000_000_000 : 1_000_000; // 1 SOL or 1 USDC
+      const inputDecimals = pairConfig.decimalsA;
+      const outputDecimals = pairConfig.decimalsB;
+      const amount = Math.pow(10, inputDecimals); // 1 unit of tokenA
       
       const apiKey = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
       const response = await fetch(
@@ -476,28 +487,18 @@ export class CrossDexMonitor {
       );
       
       if (!response.ok) {
-        console.log(`   Quote API error: ${response.status}`);
         return null;
       }
       
       const data = await response.json() as { outAmount?: string };
       
       if (data.outAmount) {
-        // Calculate price: outAmount / amount
-        const outAmount = parseInt(data.outAmount);
-        if (tokenA === 'SOL') {
-          // SOL -> USDC: price = outAmount (USDC with 6 decimals) / 1e6
-          return outAmount / 1_000_000;
-        } else {
-          // USDC -> SOL: price = 1 / (outAmount / 1e9)
-          return 1_000_000_000 / outAmount;
-        }
+        // Price = outAmount / 10^outputDecimals (price of 1 tokenA in tokenB)
+        return parseInt(data.outAmount) / Math.pow(10, outputDecimals);
       }
       
-      console.log(`   No quote data`);
       return null;
     } catch (err) {
-      console.log(`   Quote fetch error: ${err}`);
       return null;
     }
   }
