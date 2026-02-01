@@ -191,78 +191,113 @@ export class LiquidationBot {
   private async getAllObligations(): Promise<KaminoObligation[]> {
     if (!this.market) return [];
 
-    console.log('   Fetching obligations via RPC...');
+    console.log('   Fetching obligations...');
 
+    // Try multiple dataSize values - Kamino may have different obligation versions
+    const possibleSizes = [3096, 3248, 3352, 3400, 3500];
+    
+    for (const size of possibleSizes) {
+      try {
+        const accounts = await this.connection.getProgramAccounts(
+          PROGRAM_ID,
+          {
+            filters: [
+              { dataSize: size },
+              {
+                memcmp: {
+                  offset: 32,
+                  bytes: KAMINO_MAIN_MARKET.toBase58(),
+                },
+              },
+            ],
+          }
+        );
+
+        if (accounts.length > 0) {
+          console.log(`   ✅ Found ${accounts.length} obligations (dataSize=${size})`);
+          return await this.parseObligations(accounts);
+        }
+      } catch {
+        // Try next size
+      }
+    }
+
+    // Try without dataSize filter (slower but more reliable)
+    console.log('   Trying without dataSize filter...');
     try {
-      // Correct filters from SDK source code:
-      // - dataSize: Obligation account size (3240 bytes + 8 discriminator = 3248)
-      // - memcmp offset 32: lending_market pubkey location
-      const OBLIGATION_SIZE = 3248; // Obligation.layout.span + 8
-      
       const accounts = await this.connection.getProgramAccounts(
         PROGRAM_ID,
         {
           filters: [
-            { dataSize: OBLIGATION_SIZE },
             {
               memcmp: {
-                offset: 32, // Market address is at offset 32, NOT 8!
+                offset: 32,
                 bytes: KAMINO_MAIN_MARKET.toBase58(),
               },
             },
           ],
+          dataSlice: { offset: 0, length: 0 }, // Just get pubkeys
         }
       );
 
-      console.log(`   ✅ Found ${accounts.length} obligation accounts for this market`);
-
-      if (accounts.length === 0) {
-        console.log('   No obligations found. Market may be empty or RPC limited.');
-        return [];
-      }
-
-      // Parse obligations - limit to first 200 for performance
-      const obligations: KaminoObligation[] = [];
-      let parsed = 0;
-      let withBorrows = 0;
-
-      for (const acc of accounts.slice(0, 200)) {
-        try {
-          const obl = await this.market!.getObligationByAddress(acc.pubkey);
-          parsed++;
-          
-          if (obl && obl.borrows && obl.borrows.size > 0) {
-            obligations.push(obl);
-            withBorrows++;
-          }
-          
-          // Progress every 50
-          if (parsed % 50 === 0) {
-            console.log(`   Parsed ${parsed}/${Math.min(accounts.length, 200)}, found ${withBorrows} with borrows...`);
-          }
-        } catch {
-          // Skip invalid obligations
-        }
-      }
-
-      console.log(`   ✅ Loaded ${obligations.length} obligations with active borrows`);
-      return obligations;
-
-    } catch (error: any) {
-      console.error(`   RPC error: ${error.message}`);
+      console.log(`   Found ${accounts.length} accounts for this market`);
       
-      // Fallback to SDK method
-      console.log('   Trying SDK method...');
+      if (accounts.length > 0) {
+        // Fetch full data for first 200
+        const obligations: KaminoObligation[] = [];
+        for (const acc of accounts.slice(0, 200)) {
+          try {
+            const obl = await this.market!.getObligationByAddress(acc.pubkey);
+            if (obl && obl.borrows && obl.borrows.size > 0) {
+              obligations.push(obl);
+            }
+          } catch {
+            // Not an obligation
+          }
+        }
+        console.log(`   ✅ Loaded ${obligations.length} obligations with borrows`);
+        return obligations;
+      }
+    } catch (e: any) {
+      console.log(`   RPC error: ${e.message?.substring(0, 50)}`);
+    }
+
+    // Last resort: SDK method
+    console.log('   Trying SDK getAllObligationsForMarket...');
+    try {
+      const allObligations = await this.market.getAllObligationsForMarket();
+      const withBorrows = allObligations.filter(o => o && o.borrows && o.borrows.size > 0);
+      console.log(`   SDK found ${withBorrows.length} obligations`);
+      return withBorrows;
+    } catch (e: any) {
+      console.log(`   SDK failed: ${e.message?.substring(0, 40)}`);
+      return [];
+    }
+  }
+
+  private async parseObligations(accounts: readonly { pubkey: PublicKey; account: any }[]): Promise<KaminoObligation[]> {
+    const obligations: KaminoObligation[] = [];
+    let parsed = 0;
+
+    for (const acc of accounts.slice(0, 300)) {
       try {
-        const allObligations = await this.market.getAllObligationsForMarket();
-        const withBorrows = allObligations.filter(o => o && o.borrows && o.borrows.size > 0);
-        console.log(`   SDK found ${withBorrows.length} obligations`);
-        return withBorrows;
-      } catch (sdkError: any) {
-        console.error(`   SDK also failed: ${sdkError.message?.substring(0, 50)}`);
-        return [];
+        const obl = await this.market!.getObligationByAddress(acc.pubkey);
+        parsed++;
+        
+        if (obl && obl.borrows && obl.borrows.size > 0) {
+          obligations.push(obl);
+        }
+        
+        if (parsed % 100 === 0) {
+          console.log(`   Parsed ${parsed}, found ${obligations.length} with borrows...`);
+        }
+      } catch {
+        // Skip
       }
     }
+
+    console.log(`   ✅ Loaded ${obligations.length} obligations with active borrows`);
+    return obligations;
   }
 
   private analyzeObligation(obligation: KaminoObligation): {
