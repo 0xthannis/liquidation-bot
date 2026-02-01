@@ -30,7 +30,7 @@ export interface TradeRecord {
   id: string;
   timestamp: string;
   pair: string;
-  type?: 'round_trip' | 'cross_dex' | 'cross_dex_opportunity';
+  type?: 'round_trip' | 'cross_dex' | 'cross_dex_opportunity' | 'memecoin_arb';
   amount: number;
   token?: string;
   profit: number;
