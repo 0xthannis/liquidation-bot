@@ -51,12 +51,18 @@ export const POOLS = {
     tickArray2: new PublicKey('7jtgQfyCHXkj94AMeRPqkVNt9AGdDgiJZmNmkwcU36iN'),
     oracle: new PublicKey('4GkRbcYg1VKsZropgai4dMf2Nj2PkXNLf43knFpavrSi'),
   },
-  // PumpSwap AMM
+  // PumpSwap AMM - SOL/USDC pool (if exists)
   pumpswap: {
     programId: new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'),
-    // PumpSwap uses dynamic pool discovery - we'll fetch at runtime
+    // PumpSwap pools are discovered dynamically per token
+    // Global fee config
+    feeConfig: new PublicKey('FeeVaVkgFbFAqPcRPxzbuJKjjyZmKvnqjSPNgCxC2Pn'),
+    feeProgram: new PublicKey('FeeRV5cDLKH5WFrrKJ7WDYXmGNnJrEyy1LYLC3aHQdu'),
   },
 };
+
+// WSOL mint for PumpSwap
+const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 
 // Token mints
 export const TOKENS = {
@@ -329,6 +335,241 @@ export async function createDirectSwapInstructions(
   }
 }
 
+// ============== PUMPSWAP DIRECT SWAP ==============
+// PumpSwap instruction discriminators (from IDL)
+const PUMPSWAP_BUY_DISCRIMINATOR = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]); // buy
+const PUMPSWAP_SELL_DISCRIMINATOR = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]); // sell
+
+/**
+ * Find PumpSwap pool address for a token
+ */
+export async function findPumpSwapPool(
+  tokenMint: PublicKey
+): Promise<PublicKey> {
+  const [poolAddress] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('pool'),
+      tokenMint.toBuffer(),
+      WSOL_MINT.toBuffer(),
+    ],
+    POOLS.pumpswap.programId
+  );
+  return poolAddress;
+}
+
+/**
+ * Get PumpSwap pool reserves
+ */
+export async function getPumpSwapReserves(
+  connection: Connection,
+  poolAddress: PublicKey
+): Promise<{ solReserve: bigint; tokenReserve: bigint } | null> {
+  try {
+    const poolAccount = await connection.getAccountInfo(poolAddress);
+    if (!poolAccount || poolAccount.data.length < 200) return null;
+
+    // Parse pool data - offsets based on PumpSwap IDL
+    // Pool structure: discriminator(8) + pool_bump(1) + index(2) + creator(32) + base_mint(32) + quote_mint(32) + lp_mint(32) + pool_base_token_account(32) + pool_quote_token_account(32) + ...
+    const data = poolAccount.data;
+    
+    // Get token accounts from pool data
+    const poolBaseTokenAccount = new PublicKey(data.slice(107, 139));
+    const poolQuoteTokenAccount = new PublicKey(data.slice(139, 171));
+
+    const [baseBalance, quoteBalance] = await Promise.all([
+      connection.getTokenAccountBalance(poolBaseTokenAccount),
+      connection.getTokenAccountBalance(poolQuoteTokenAccount),
+    ]);
+
+    return {
+      tokenReserve: BigInt(baseBalance.value.amount),
+      solReserve: BigInt(quoteBalance.value.amount),
+    };
+  } catch (error) {
+    console.error('Error getting PumpSwap reserves:', error);
+    return null;
+  }
+}
+
+/**
+ * Create PumpSwap buy instruction (SOL -> Token)
+ */
+export async function createPumpSwapBuyInstruction(
+  connection: Connection,
+  userPubkey: PublicKey,
+  tokenMint: PublicKey,
+  solAmountIn: bigint,
+  minTokensOut: bigint
+): Promise<TransactionInstruction[]> {
+  const instructions: TransactionInstruction[] = [];
+  const poolAddress = await findPumpSwapPool(tokenMint);
+
+  // Get pool account to extract token accounts
+  const poolAccount = await connection.getAccountInfo(poolAddress);
+  if (!poolAccount) throw new Error('Pool not found');
+
+  const data = poolAccount.data;
+  const poolBaseTokenAccount = new PublicKey(data.slice(107, 139));
+  const poolQuoteTokenAccount = new PublicKey(data.slice(139, 171));
+
+  // User token accounts
+  const userTokenAta = await getAssociatedTokenAddress(tokenMint, userPubkey);
+  const userWsolAta = await getAssociatedTokenAddress(WSOL_MINT, userPubkey);
+
+  // Check if ATAs exist
+  const tokenAccount = await connection.getAccountInfo(userTokenAta);
+  if (!tokenAccount) {
+    instructions.push(
+      createAssociatedTokenAccountInstruction(userPubkey, userTokenAta, userPubkey, tokenMint)
+    );
+  }
+
+  // Build buy instruction data
+  // buy(base_amount_out: u64, max_quote_amount_in: u64)
+  const buyData = Buffer.alloc(8 + 8 + 8);
+  PUMPSWAP_BUY_DISCRIMINATOR.copy(buyData, 0);
+  buyData.writeBigUInt64LE(minTokensOut, 8);  // base_amount_out (tokens)
+  buyData.writeBigUInt64LE(solAmountIn, 16);   // max_quote_amount_in (SOL)
+
+  const keys: AccountMeta[] = [
+    { pubkey: poolAddress, isSigner: false, isWritable: true },
+    { pubkey: userPubkey, isSigner: true, isWritable: true },
+    { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },  // pool token vault
+    { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true }, // pool SOL vault
+    { pubkey: userTokenAta, isSigner: false, isWritable: true },          // user token account
+    { pubkey: userWsolAta, isSigner: false, isWritable: true },           // user WSOL account
+    { pubkey: tokenMint, isSigner: false, isWritable: false },            // token mint
+    { pubkey: WSOL_MINT, isSigner: false, isWritable: false },            // WSOL mint
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },     // token program 2022 fallback
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: POOLS.pumpswap.feeConfig, isSigner: false, isWritable: false },
+    { pubkey: POOLS.pumpswap.feeProgram, isSigner: false, isWritable: false },
+  ];
+
+  instructions.push(
+    new TransactionInstruction({
+      programId: POOLS.pumpswap.programId,
+      keys,
+      data: buyData,
+    })
+  );
+
+  return instructions;
+}
+
+/**
+ * Create PumpSwap sell instruction (Token -> SOL)
+ */
+export async function createPumpSwapSellInstruction(
+  connection: Connection,
+  userPubkey: PublicKey,
+  tokenMint: PublicKey,
+  tokenAmountIn: bigint,
+  minSolOut: bigint
+): Promise<TransactionInstruction[]> {
+  const instructions: TransactionInstruction[] = [];
+  const poolAddress = await findPumpSwapPool(tokenMint);
+
+  // Get pool account
+  const poolAccount = await connection.getAccountInfo(poolAddress);
+  if (!poolAccount) throw new Error('Pool not found');
+
+  const data = poolAccount.data;
+  const poolBaseTokenAccount = new PublicKey(data.slice(107, 139));
+  const poolQuoteTokenAccount = new PublicKey(data.slice(139, 171));
+
+  // User token accounts
+  const userTokenAta = await getAssociatedTokenAddress(tokenMint, userPubkey);
+  const userWsolAta = await getAssociatedTokenAddress(WSOL_MINT, userPubkey);
+
+  // Build sell instruction data
+  // sell(base_amount_in: u64, min_quote_amount_out: u64)
+  const sellData = Buffer.alloc(8 + 8 + 8);
+  PUMPSWAP_SELL_DISCRIMINATOR.copy(sellData, 0);
+  sellData.writeBigUInt64LE(tokenAmountIn, 8);  // base_amount_in (tokens)
+  sellData.writeBigUInt64LE(minSolOut, 16);      // min_quote_amount_out (SOL)
+
+  const keys: AccountMeta[] = [
+    { pubkey: poolAddress, isSigner: false, isWritable: true },
+    { pubkey: userPubkey, isSigner: true, isWritable: true },
+    { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: userTokenAta, isSigner: false, isWritable: true },
+    { pubkey: userWsolAta, isSigner: false, isWritable: true },
+    { pubkey: tokenMint, isSigner: false, isWritable: false },
+    { pubkey: WSOL_MINT, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: POOLS.pumpswap.feeConfig, isSigner: false, isWritable: false },
+    { pubkey: POOLS.pumpswap.feeProgram, isSigner: false, isWritable: false },
+  ];
+
+  instructions.push(
+    new TransactionInstruction({
+      programId: POOLS.pumpswap.programId,
+      keys,
+      data: sellData,
+    })
+  );
+
+  return instructions;
+}
+
+/**
+ * Create direct PumpSwap swap
+ */
+export async function createPumpSwapDirectSwap(
+  connection: Connection,
+  userPubkey: PublicKey,
+  tokenMint: PublicKey,
+  amountIn: bigint,
+  direction: 'BUY' | 'SELL', // BUY = SOL->Token, SELL = Token->SOL
+  slippageBps: number = 300 // 3% default for memecoins
+): Promise<{ instructions: TransactionInstruction[]; expectedOutput: bigint } | null> {
+  try {
+    const poolAddress = await findPumpSwapPool(tokenMint);
+    const reserves = await getPumpSwapReserves(connection, poolAddress);
+    
+    if (!reserves) {
+      console.log('   PumpSwap pool not found or empty');
+      return null;
+    }
+
+    const { solReserve, tokenReserve } = reserves;
+    
+    // Calculate output using constant product formula
+    // PumpSwap fee is 1% (100 bps)
+    const feeNumerator = 100n;
+    const feeDenominator = 10000n;
+    
+    let expectedOutput: bigint;
+    let minOutput: bigint;
+    let instructions: TransactionInstruction[];
+
+    if (direction === 'BUY') {
+      // SOL -> Token
+      expectedOutput = calculateSwapOutput(amountIn, solReserve, tokenReserve, feeNumerator, feeDenominator);
+      minOutput = expectedOutput * BigInt(10000 - slippageBps) / 10000n;
+      instructions = await createPumpSwapBuyInstruction(connection, userPubkey, tokenMint, amountIn, minOutput);
+    } else {
+      // Token -> SOL
+      expectedOutput = calculateSwapOutput(amountIn, tokenReserve, solReserve, feeNumerator, feeDenominator);
+      minOutput = expectedOutput * BigInt(10000 - slippageBps) / 10000n;
+      instructions = await createPumpSwapSellInstruction(connection, userPubkey, tokenMint, amountIn, minOutput);
+    }
+
+    console.log(`   PumpSwap ${direction}: ${amountIn} -> ${expectedOutput} (min: ${minOutput})`);
+    
+    return { instructions, expectedOutput };
+  } catch (error) {
+    console.error('Error creating PumpSwap swap:', error);
+    return null;
+  }
+}
+
 console.log('✅ AMM Direct Swap module loaded');
-console.log('   Supported DEXes: Raydium, Orca Whirlpool');
-console.log('   Fees: Raydium 0.25%, Orca 0.3%');
+console.log('   Supported DEXes: Raydium, Orca Whirlpool, PumpSwap');
+console.log('   Fees: Raydium 0.25%, Orca 0.3%, PumpSwap 1%');
