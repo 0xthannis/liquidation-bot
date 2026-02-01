@@ -1,14 +1,14 @@
 {
-  "name": "flash-arb-bot",
-  "version": "1.0.0",
-  "description": "Arbitrage bot with Kamino flash loans + Jupiter swaps",
+  "name": "liquidation-bot",
+  "version": "2.0.0",
+  "description": "Kamino Lending Liquidation Bot",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "tsx src/main.ts",
-    "start:old": "tsx src/flash-arb.ts",
-    "dev": "tsx src/main.ts"
+    "start": "tsx src/main-liquidation.ts",
+    "start:arb": "tsx src/main.ts",
+    "dev": "tsx src/main-liquidation.ts"
   },
   "dependencies": {
     "@kamino-finance/klend-sdk": "^3.2.1",
