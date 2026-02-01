@@ -10,6 +10,7 @@ import {
   Logs,
 } from '@solana/web3.js';
 import { recordTrade, botStats } from './api-server';
+import { getPoolPrice } from './amm-swap';
 
 // DEX Program IDs
 const DEX_PROGRAMS = {
@@ -439,23 +440,17 @@ export class CrossDexMonitor {
     
     // Return cached price if still valid
     if (cached && (now - cached.timestamp) < this.priceCacheTTL) {
-      // Add tiny variance for Orca to simulate different price
-      if (source === 'orca') {
-        return cached.price * (1 + (Math.random() * 0.002 - 0.001));
-      }
       return cached.price;
     }
     
-    // Fetch fresh price
-    const price = await this.fetchPrice(tokenA, tokenB);
+    // Fetch price directly from pool (no Jupiter = no 429!)
+    const dex = source as 'raydium' | 'orca' | 'pumpswap';
+    const price = await getPoolPrice(this.connection, dex);
+    
     if (price !== null) {
       this.priceCache.set(cacheKey, { price, timestamp: now });
     }
     
-    // Add variance for Orca
-    if (source === 'orca' && price !== null) {
-      return price * (1 + (Math.random() * 0.002 - 0.001));
-    }
     return price;
   }
 
