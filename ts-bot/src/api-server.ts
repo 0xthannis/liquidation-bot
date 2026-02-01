@@ -30,13 +30,16 @@ export interface TradeRecord {
   id: string;
   timestamp: string;
   pair: string;
+  type?: 'round_trip' | 'cross_dex' | 'cross_dex_opportunity';
   amount: number;
-  token: string;
+  token?: string;
   profit: number;
   profitUsd: number;
-  status: 'success' | 'failed' | 'skipped' | 'not_profitable' | 'no_route' | 'simulation_failed';
+  status: 'success' | 'failed' | 'skipped' | 'not_profitable' | 'no_route' | 'simulation_failed' | 'opportunity_detected' | 'cross_dex_success' | 'cross_dex_failed';
   txHash?: string;
-  reason?: string; // Detailed reason for status
+  txSignature?: string;
+  reason?: string;
+  details?: string;
   quoteIn?: number;
   quoteOut?: number;
 }
@@ -117,7 +120,7 @@ export function updateWalletBalance(balance: number) {
 
 // Start API server
 export function startApiServer(port: number = 3001) {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -149,6 +152,23 @@ export function startApiServer(port: number = 3001) {
     if (req.method === 'GET' && req.url === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+      return;
+    }
+
+    // Cross-DEX stats endpoint (imported dynamically to avoid circular deps)
+    if (req.method === 'GET' && req.url === '/api/cross-dex') {
+      try {
+        const { crossDexStats } = await import('./cross-dex-monitor');
+        const { engineStats } = await import('./arbitrage-engine');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          crossDex: crossDexStats,
+          engine: engineStats,
+        }));
+      } catch {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ crossDex: null, engine: null, error: 'Cross-DEX not running' }));
+      }
       return;
     }
     

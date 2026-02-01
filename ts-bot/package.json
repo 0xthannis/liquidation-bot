@@ -7,20 +7,25 @@
   "scripts": {
     "build": "tsc",
     "start": "tsx src/flash-arb.ts",
+    "start:dual": "tsx src/main.ts",
+    "start:crossdex": "tsx src/main.ts",
     "dev": "tsx src/flash-arb.ts"
   },
   "dependencies": {
     "@kamino-finance/klend-sdk": "^3.2.1",
-    "@solana/web3.js": "^1.95.0",
+    "@orca-so/common-sdk": "^0.7.0",
+    "@orca-so/whirlpools-sdk": "^0.18.0",
+    "@raydium-io/raydium-sdk-v2": "^0.2.32-alpha",
     "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "^1.95.0",
     "bs58": "^6.0.0",
+    "decimal.js": "^10.6.0",
     "dotenv": "^16.3.1",
-    "decimal.js": "^10.4.3",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "typescript": "^5.3.0",
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
   }
 }
