@@ -37,11 +37,14 @@ const CONFIG = {
   // Full refresh interval (ms) - 60 minutes
   FULL_REFRESH_INTERVAL_MS: 60 * 60 * 1000,
   
-  // Parallel batches for fetching obligations
-  PARALLEL_BATCHES: 10,
+  // Parallel batches for fetching obligations (reduced for free RPC plans)
+  PARALLEL_BATCHES: 2,
   
   // Batch size for getMultipleAccountsInfo
-  BATCH_SIZE: 100,
+  BATCH_SIZE: 50,
+  
+  // Delay between batches (ms) to avoid rate limits
+  BATCH_DELAY_MS: 200,
   
   // Price change threshold to trigger check (0.1% = 0.001)
   PRICE_CHANGE_THRESHOLD: 0.001,
@@ -357,8 +360,10 @@ export class LiquidationBotPro {
 
     console.log(`   ... splitting into ${chunks.length} parallel chunks`);
 
-    // Process chunks in parallel
-    await Promise.all(chunks.map(async (chunk, chunkIdx) => {
+    // Process chunks sequentially to avoid rate limits
+    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+      const chunk = chunks[chunkIdx];
+      
       for (let i = 0; i < chunk.pubkeys.length; i += CONFIG.BATCH_SIZE) {
         const batch = chunk.pubkeys.slice(i, i + CONFIG.BATCH_SIZE);
         
@@ -372,9 +377,9 @@ export class LiquidationBotPro {
             }
           }
         } catch (e) {
-          // Retry once on failure
+          // Retry once on failure with longer delay
           try {
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 2000));
             const infos = await this.connection.getMultipleAccountsInfo(batch);
             for (let j = 0; j < infos.length; j++) {
               const globalIdx = chunk.startIdx + i + j;
@@ -386,10 +391,13 @@ export class LiquidationBotPro {
             // Skip this batch
           }
         }
+        
+        // Delay between batches to avoid rate limits
+        await new Promise(r => setTimeout(r, CONFIG.BATCH_DELAY_MS));
       }
       
-      console.log(`   ... chunk ${chunkIdx + 1}/${chunks.length} complete`);
-    }));
+      console.log(`   ... chunk ${chunkIdx + 1}/${chunks.length} complete (${((chunkIdx + 1) / chunks.length * 100).toFixed(0)}%)`);
+    }
 
     return results;
   }
