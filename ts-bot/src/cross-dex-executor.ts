@@ -536,8 +536,8 @@ export class CrossDexExecutor {
     const SOL_PRICE_USD = 100; // Approximate SOL price
     const profitInSol = profitUsd / SOL_PRICE_USD;
     const tipSol = Math.min(
-      profitInSol * 0.30, // Max 30% of profit
-      0.05 // Cap at 0.05 SOL (~$5)
+      profitInSol * 0.20, // Max 20% of profit
+      0.01 // Cap at 0.01 SOL (~$1)
     );
     const tipLamports = Math.max(
       1_000_000, // Min 0.001 SOL
