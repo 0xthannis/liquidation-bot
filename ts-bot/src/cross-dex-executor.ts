@@ -24,8 +24,10 @@ import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } fro
 import fetch from 'node-fetch';
 import { CrossDexOpportunity, crossDexStats } from './cross-dex-monitor';
 import { recordTrade, botStats } from './api-server';
+import { createDirectSwapInstructions, getPoolPrice, POOLS, TOKENS as AMM_TOKENS } from './amm-swap';
 
-// Configuration
+// Configuration - AMM Direct mode (bypass Jupiter for lower fees)
+const USE_DIRECT_AMM = true; // Set to false to use Jupiter instead
 const JUPITER_API_KEY = process.env.JUPITER_API_KEY || '1605a29f-3095-43b5-ab87-cbb29975bd36';
 const JUPITER_QUOTE_API = 'https://api.jup.ag/swap/v1/quote';
 const JUPITER_SWAP_API = 'https://api.jup.ag/swap/v1/swap-instructions';
@@ -116,48 +118,85 @@ export class CrossDexExecutor {
       // DYNAMIC OPTIMAL AMOUNT: Test multiple amounts and pick the most profitable
       console.log(`   🔍 Finding optimal flash loan amount...`);
       console.log(`   Buy on: ${buyDex} -> Sell on: ${sellDex}`);
+      console.log(`   Mode: ${USE_DIRECT_AMM ? '🚀 DIRECT AMM (low fees)' : '🔄 Jupiter'}`);
       
-      // Test amounts from $10k to $100M - find the sweet spot with max profit
-      const testAmounts = [
-        10_000, 50_000, 100_000, 500_000,           // Small
-        1_000_000, 2_000_000, 5_000_000,            // Medium  
-        10_000_000, 25_000_000, 50_000_000,         // Large
-        100_000_000                                  // Max (if Kamino has liquidity)
-      ];
+      // Test amounts - smaller for direct AMM (less slippage impact)
+      const testAmounts = USE_DIRECT_AMM
+        ? [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000] // Direct AMM: smaller amounts
+        : [10_000, 50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]; // Jupiter: larger
+      
       let bestAmount = 0;
       let bestProfit = 0;
-      let bestQuote1: any = null;
-      let bestQuote2: any = null;
+      let bestSwap1: any = null;
+      let bestSwap2: any = null;
 
       for (const amountUsd of testAmounts) {
-        const amount = BigInt(Math.floor(amountUsd * 1_000_000));
+        const amount = BigInt(Math.floor(amountUsd * 1_000_000)); // USDC amount (6 decimals)
         
-        // Get quote 1: USDC -> SOL
-        const q1 = await this.getQuoteFromDex(TOKENS.USDC, TOKENS.SOL, amount, buyDex);
-        if (!q1) continue;
-        
-        const solAmount = BigInt(q1.outAmount);
-        
-        // Get quote 2: SOL -> USDC
-        const q2 = await this.getQuoteFromDex(TOKENS.SOL, TOKENS.USDC, solAmount, sellDex);
-        if (!q2) continue;
-        
-        const returned = BigInt(q2.outAmount);
-        const fee = amount * 1n / 100000n; // 0.001% Kamino fee
-        const profit = Number(returned - amount - fee) / 1_000_000;
-        
-        console.log(`   💰 $${amountUsd.toLocaleString()} → profit: $${profit.toFixed(2)}`);
-        
-        if (profit > bestProfit) {
-          bestProfit = profit;
-          bestAmount = amountUsd;
-          bestQuote1 = q1;
-          bestQuote2 = q2;
+        if (USE_DIRECT_AMM && (buyDex === 'raydium' || buyDex === 'orca') && (sellDex === 'raydium' || sellDex === 'orca')) {
+          // DIRECT AMM SWAP - Much lower fees!
+          const swap1 = await createDirectSwapInstructions(
+            this.connection,
+            this.keypair.publicKey,
+            buyDex as 'raydium' | 'orca',
+            amount,
+            'USDC_TO_SOL',
+            30 // 0.3% slippage
+          );
+          if (!swap1) continue;
+
+          const swap2 = await createDirectSwapInstructions(
+            this.connection,
+            this.keypair.publicKey,
+            sellDex as 'raydium' | 'orca',
+            swap1.expectedOutput,
+            'SOL_TO_USDC',
+            30
+          );
+          if (!swap2) continue;
+
+          const returned = swap2.expectedOutput;
+          const fee = amount * 1n / 100000n; // 0.001% Kamino fee
+          const profit = Number(returned - amount - fee) / 1_000_000;
+          
+          console.log(`   💰 $${amountUsd.toLocaleString()} → profit: $${profit.toFixed(2)} (DIRECT)`);
+          
+          if (profit > bestProfit) {
+            bestProfit = profit;
+            bestAmount = amountUsd;
+            bestSwap1 = swap1;
+            bestSwap2 = swap2;
+          }
+        } else {
+          // JUPITER FALLBACK (for PumpSwap or if direct AMM disabled)
+          const q1 = await this.getQuoteFromDex(TOKENS.USDC, TOKENS.SOL, amount, buyDex);
+          if (!q1) continue;
+          
+          const solAmount = BigInt(q1.outAmount);
+          
+          const q2 = await this.getQuoteFromDex(TOKENS.SOL, TOKENS.USDC, solAmount, sellDex);
+          if (!q2) continue;
+          
+          const returned = BigInt(q2.outAmount);
+          const fee = amount * 1n / 100000n;
+          const profit = Number(returned - amount - fee) / 1_000_000;
+          
+          console.log(`   💰 $${amountUsd.toLocaleString()} → profit: $${profit.toFixed(2)} (Jupiter)`);
+          
+          if (profit > bestProfit) {
+            bestProfit = profit;
+            bestAmount = amountUsd;
+            bestSwap1 = { quote: q1 };
+            bestSwap2 = { quote: q2 };
+          }
         }
       }
 
-      if (bestProfit < 0.10 || !bestQuote1 || !bestQuote2) {
-        console.log(`   ❌ No profitable amount found (best: $${bestProfit.toFixed(2)}, need >$0.10)`);
+      // Lower profit threshold for direct AMM (fees are much lower)
+      const minProfit = USE_DIRECT_AMM ? 0.01 : 0.10; // $0.01 for direct, $0.10 for Jupiter
+      
+      if (bestProfit < minProfit || !bestSwap1 || !bestSwap2) {
+        console.log(`   ❌ No profitable amount found (best: $${bestProfit.toFixed(2)}, need >$${minProfit})`);
         crossDexStats.missedReasons.spreadTooLow++;
         recordTrade({
           pair,
@@ -165,8 +204,8 @@ export class CrossDexExecutor {
           amount: bestAmount,
           profit: bestProfit,
           profitUsd: bestProfit,
-          status: 'opportunity_detected', // Spread was good, but real profit after slippage too low
-          details: `${buyDex} → ${sellDex}: Spread ${spreadPercent.toFixed(3)}% but real profit $${bestProfit.toFixed(2)} after slippage`,
+          status: 'opportunity_detected',
+          details: `${buyDex} → ${sellDex}: Spread ${spreadPercent.toFixed(3)}% but real profit $${bestProfit.toFixed(2)}`,
         });
         return false;
       }
@@ -178,9 +217,27 @@ export class CrossDexExecutor {
 
       console.log(`   ✅ OPTIMAL: $${flashAmountUsd.toLocaleString()} → profit: $${profitUsd.toFixed(2)}`);
 
-      // Get swap instructions with optimal quotes
-      const swapIx1 = await this.getSwapInstructions(bestQuote1);
-      const swapIx2 = await this.getSwapInstructions(bestQuote2);
+      // Get swap instructions
+      let swapIx1: SwapInstructions | null = null;
+      let swapIx2: SwapInstructions | null = null;
+
+      if (USE_DIRECT_AMM && bestSwap1.instructions) {
+        // Direct AMM instructions - wrap in SwapInstructions format
+        swapIx1 = {
+          setupInstructions: [],
+          swapInstruction: bestSwap1.instructions,
+          addressLookupTableAddresses: [],
+        };
+        swapIx2 = {
+          setupInstructions: [],
+          swapInstruction: bestSwap2.instructions,
+          addressLookupTableAddresses: [],
+        };
+      } else {
+        // Jupiter instructions
+        swapIx1 = await this.getSwapInstructions(bestSwap1.quote);
+        swapIx2 = await this.getSwapInstructions(bestSwap2.quote);
+      }
 
       if (!swapIx1 || !swapIx2) {
         console.log('   ❌ Failed to get swap instructions');

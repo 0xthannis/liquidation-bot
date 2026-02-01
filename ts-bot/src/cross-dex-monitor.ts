@@ -100,7 +100,7 @@ export class CrossDexMonitor {
   private connection: Connection;
   private subscriptionId: number | null = null;
   private onOpportunity: OpportunityCallback | null = null;
-  private minSpreadPercent: number = 0.08; // 0.08% minimum - Kamino fee is only 0.001%
+  private minSpreadPercent: number = 0.03; // 0.03% minimum - Direct AMM swaps have very low fees!
   private minSwapUsd: number = 10000; // React to swaps >$10k (many more opportunities)
   private isRunning: boolean = false;
   
