@@ -494,7 +494,7 @@ export class CrossDexExecutor {
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
-      amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
+      amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
       destinationAta: userUsdcAta,
       referrerAccount: this.keypair.publicKey, // Use wallet as placeholder
       referrerTokenState: this.keypair.publicKey, // Use wallet as placeholder
@@ -581,7 +581,7 @@ export class CrossDexExecutor {
       lendingMarketAuthority,
       lendingMarketAddress: this.market.getAddress(),
       reserve,
-      amountLamports: flashAmount as any, // Cast to any - SDK type mismatch
+      amountLamports: new Decimal(flashAmount.toString()), // Convert to Decimal for SDK
       destinationAta: userUsdcAta,
       referrerAccount: this.keypair.publicKey, // Use wallet as placeholder
       referrerTokenState: this.keypair.publicKey, // Use wallet as placeholder
