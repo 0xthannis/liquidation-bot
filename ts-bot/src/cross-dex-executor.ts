@@ -824,10 +824,27 @@ export class CrossDexExecutor {
       };
     });
 
+    // Handle data in different formats: base64 string, hex string, array, or Buffer
+    let dataBuffer: Buffer;
+    if (Buffer.isBuffer(instruction.data)) {
+      dataBuffer = instruction.data;
+    } else if (Array.isArray(instruction.data)) {
+      dataBuffer = Buffer.from(instruction.data);
+    } else if (typeof instruction.data === 'string') {
+      // Try to detect format - hex strings are typically longer and contain only hex chars
+      if (/^[0-9a-fA-F]+$/.test(instruction.data) && instruction.data.length > 100) {
+        dataBuffer = Buffer.from(instruction.data, 'hex');
+      } else {
+        dataBuffer = Buffer.from(instruction.data, 'base64');
+      }
+    } else {
+      throw new Error(`Unknown data format: ${typeof instruction.data}`);
+    }
+
     return new TransactionInstruction({
       programId: new PublicKey(instruction.programId),
       keys,
-      data: Buffer.from(instruction.data, 'base64'),
+      data: dataBuffer,
     });
   }
   
