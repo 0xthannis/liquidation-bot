@@ -267,50 +267,52 @@ export class CrossDexMonitor {
 
   private async getRaydiumPrice(poolAddress: PublicKey, tokenA: string, tokenB: string): Promise<number | null> {
     try {
-      // Use Jupiter price API as a proxy for Raydium price
-      // This is simpler and more reliable than parsing pool state directly
+      // Use Jupiter Quote API to get price (no API key needed)
+      // Get quote for 1 SOL -> USDC to derive SOL price
+      const inputMint = TOKENS[tokenA as keyof typeof TOKENS].toString();
+      const outputMint = TOKENS[tokenB as keyof typeof TOKENS].toString();
+      const amount = tokenA === 'SOL' ? 1_000_000_000 : 1_000_000; // 1 SOL or 1 USDC
+      
       const response = await fetch(
-        `https://price.jup.ag/v6/price?ids=${TOKENS[tokenA as keyof typeof TOKENS].toString()}&vsToken=${TOKENS[tokenB as keyof typeof TOKENS].toString()}`
+        `https://api.jup.ag/quote/v1?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=50`,
+        { headers: { 'Accept': 'application/json' } }
       );
       
-      if (!response.ok) return null;
-      
-      const data = await response.json();
-      const tokenAddress = TOKENS[tokenA as keyof typeof TOKENS].toString();
-      
-      if (data.data && data.data[tokenAddress]) {
-        return data.data[tokenAddress].price;
+      if (!response.ok) {
+        console.log(`   Quote API error: ${response.status}`);
+        return null;
       }
       
+      const data = await response.json() as { outAmount?: string };
+      
+      if (data.outAmount) {
+        // Calculate price: outAmount / amount
+        const outAmount = parseInt(data.outAmount);
+        if (tokenA === 'SOL') {
+          // SOL -> USDC: price = outAmount (USDC with 6 decimals) / 1e6
+          return outAmount / 1_000_000;
+        } else {
+          // USDC -> SOL: price = 1 / (outAmount / 1e9)
+          return 1_000_000_000 / outAmount;
+        }
+      }
+      
+      console.log(`   No quote data`);
       return null;
-    } catch {
+    } catch (err) {
+      console.log(`   Quote fetch error: ${err}`);
       return null;
     }
   }
 
   private async getOrcaPrice(poolAddress: PublicKey, tokenA: string, tokenB: string): Promise<number | null> {
-    try {
-      // For now, use Jupiter as well but add small delay to simulate real-time difference
-      // In production, you'd fetch directly from Orca pool state
-      const response = await fetch(
-        `https://price.jup.ag/v6/price?ids=${TOKENS[tokenA as keyof typeof TOKENS].toString()}&vsToken=${TOKENS[tokenB as keyof typeof TOKENS].toString()}`
-      );
-      
-      if (!response.ok) return null;
-      
-      const data = await response.json();
-      const tokenAddress = TOKENS[tokenA as keyof typeof TOKENS].toString();
-      
-      if (data.data && data.data[tokenAddress]) {
-        // Add tiny variance to simulate price difference (for testing)
-        // In production, this would be real price from Orca
-        return data.data[tokenAddress].price * (1 + (Math.random() * 0.002 - 0.001));
-      }
-      
-      return null;
-    } catch {
-      return null;
+    // Use same method but add slight variance to simulate Orca
+    const price = await this.getRaydiumPrice(poolAddress, tokenA, tokenB);
+    if (price) {
+      // Add tiny variance (-0.1% to +0.1%) to simulate Orca price difference
+      return price * (1 + (Math.random() * 0.002 - 0.001));
     }
+    return null;
   }
 
   getStats(): CrossDexStats {
