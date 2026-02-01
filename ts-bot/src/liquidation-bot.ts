@@ -220,6 +220,7 @@ export class LiquidationBot {
       // Debug revealed: obligation size is 3344 bytes, 98960 accounts exist
       const OBLIGATION_SIZE = 3344;
       
+      // First get just pubkeys (faster)
       const accounts = await this.connection.getProgramAccounts(
         PROGRAM_ID,
         {
@@ -232,6 +233,7 @@ export class LiquidationBot {
               },
             },
           ],
+          dataSlice: { offset: 0, length: 0 }, // Just get pubkeys, not data
         }
       );
 
@@ -241,32 +243,45 @@ export class LiquidationBot {
         return [];
       }
 
-      // Parse obligations manually to avoid SDK "borrow rate curve" bug
+      // Sample random accounts and fetch their full data
+      const shuffled = [...accounts].sort(() => Math.random() - 0.5);
+      const sampled = shuffled.slice(0, 200); // Only sample 200
+      
+      console.log(`   Sampling ${sampled.length} random obligations...`);
+      
       const obligations: ParsedObligation[] = [];
       
-      // Sample random accounts (not just first ones)
-      const shuffled = [...accounts].sort(() => Math.random() - 0.5);
-      
-      for (const acc of shuffled.slice(0, 500)) {
+      // Fetch account data in batches
+      for (let i = 0; i < sampled.length; i += 20) {
+        const batch = sampled.slice(i, i + 20);
+        const pubkeys = batch.map(a => a.pubkey);
+        
         try {
-          const data = acc.account.data;
-          const parsed = this.parseObligationData(acc.pubkey, data);
+          const infos = await this.connection.getMultipleAccountsInfo(pubkeys);
           
-          if (parsed && parsed.borrowedValue > 0) {
-            obligations.push(parsed);
+          for (let j = 0; j < infos.length; j++) {
+            const info = infos[j];
+            if (info && info.data) {
+              const parsed = this.parseObligationData(pubkeys[j], info.data);
+              if (parsed && parsed.borrowedValue > 0) {
+                obligations.push(parsed);
+              }
+            }
           }
         } catch {
-          // Skip unparseable
+          // Skip failed batch
+        }
+        
+        // Progress
+        if ((i + 20) % 60 === 0) {
+          console.log(`   Fetched ${Math.min(i + 20, sampled.length)}/${sampled.length}...`);
         }
       }
 
       console.log(`   ✅ Parsed ${obligations.length} obligations with active borrows`);
-      
-      // Convert to KaminoObligation format for compatibility
-      // We'll use our parsed data directly for analysis
       this.parsedObligations = obligations;
       
-      return []; // Return empty - we use parsedObligations directly
+      return [];
       
     } catch (e: any) {
       console.log(`   RPC error: ${e.message?.substring(0, 50) || 'unknown'}`);
