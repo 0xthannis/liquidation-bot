@@ -537,11 +537,27 @@ export class LiquidationBot {
       // Build and send transaction
       const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
       
+      // Load address lookup tables if Jupiter provided any
+      let lookupTables: AddressLookupTableAccount[] = [];
+      if (this.jupiterLookupTables.length > 0) {
+        console.log(`   📋 Loading ${this.jupiterLookupTables.length} lookup tables...`);
+        for (const tableAddress of this.jupiterLookupTables) {
+          try {
+            const tableAccount = await this.connection.getAddressLookupTable(new PublicKey(tableAddress));
+            if (tableAccount.value) {
+              lookupTables.push(tableAccount.value);
+            }
+          } catch {
+            // Skip failed lookup table
+          }
+        }
+      }
+
       const messageV0 = new TransactionMessage({
         payerKey: this.keypair.publicKey,
         recentBlockhash: blockhash,
         instructions,
-      }).compileToV0Message();
+      }).compileToV0Message(lookupTables);
 
       const tx = new VersionedTransaction(messageV0);
       tx.sign([this.keypair]);
@@ -565,7 +581,8 @@ export class LiquidationBot {
       }
 
       liquidationStats.liquidationsSuccessful++;
-      const estimatedProfit = healthInfo.borrowedValueUsd * 0.05 * 0.5 * 0.99; // 5% bonus - 0.09% flash fee - slippage
+      // Profit = liquidation bonus (2-10%) - flash loan fee (0.001%) - swap slippage (~0.1%)
+      const estimatedProfit = healthInfo.borrowedValueUsd * 0.02 * 0.5 * 0.998; // 2% min bonus, 50% max liquidation, 0.2% fees
       liquidationStats.totalProfitUsd += estimatedProfit;
 
       console.log(`   ✅ FLASH LOAN LIQUIDATION SUCCESSFUL!`);
@@ -626,8 +643,8 @@ export class LiquidationBot {
     // Flash repay discriminator from Kamino IDL
     const discriminator = Buffer.from([119, 176, 107, 53, 126, 17, 83, 245]);
     
-    // Calculate repay amount with 0.09% fee
-    const fee = (amount * BigInt(9)) / BigInt(10000);
+    // Calculate repay amount with 0.001% fee (1 bps) - from Kamino docs
+    const fee = (amount * BigInt(1)) / BigInt(100000); // 0.001% = 1/100000
     const totalRepay = amount + fee;
     
     const data = Buffer.alloc(24);
@@ -657,6 +674,7 @@ export class LiquidationBot {
 
   /**
    * Get Jupiter swap instructions to convert collateral to repay token
+   * Returns the swap transaction that needs to be executed separately
    */
   private async getJupiterSwapInstructions(
     inputMint: PublicKey,
@@ -666,48 +684,117 @@ export class LiquidationBot {
     minOutputAmount: bigint
   ): Promise<TransactionInstruction[]> {
     try {
-      // Get quote from Jupiter
-      const quoteUrl = `${JUPITER_API}/quote?inputMint=${inputMint.toString()}&outputMint=${outputMint.toString()}&amount=${minOutputAmount.toString()}&slippageBps=100`;
+      // Get quote from Jupiter - swap collateral to get enough to repay
+      // Add 5% buffer for slippage and liquidation bonus
+      const amountWithBuffer = (minOutputAmount * BigInt(105)) / BigInt(100);
+      const quoteUrl = `${JUPITER_API}/quote?inputMint=${inputMint.toString()}&outputMint=${outputMint.toString()}&amount=${amountWithBuffer.toString()}&slippageBps=100&swapMode=ExactOut`;
       
+      console.log(`   🔄 Getting Jupiter quote...`);
       const quoteResponse = await fetch(quoteUrl);
       const quote = await quoteResponse.json();
 
       if (!quote || quote.error) {
-        console.log(`   ⚠️ Jupiter quote failed, will try without swap`);
+        console.log(`   ⚠️ Jupiter quote failed: ${quote?.error || 'unknown'}`);
         return [];
       }
 
-      // Get swap transaction
-      const swapResponse = await fetch(`${JUPITER_API}/swap`, {
+      console.log(`   ✅ Quote: ${quote.inAmount} ${inputMint.toString().slice(0,8)} → ${quote.outAmount} ${outputMint.toString().slice(0,8)}`);
+
+      // Get swap instructions (not full transaction)
+      const swapResponse = await fetch(`${JUPITER_API}/swap-instructions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.keypair.publicKey.toString(),
           wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+          prioritizationFeeLamports: 'auto',
         }),
       });
 
       const swapData = await swapResponse.json();
 
-      if (!swapData || !swapData.swapTransaction) {
-        console.log(`   ⚠️ Jupiter swap tx failed, will try without swap`);
+      if (!swapData || swapData.error) {
+        console.log(`   ⚠️ Jupiter swap-instructions failed: ${swapData?.error || 'unknown'}`);
         return [];
       }
 
-      // Decode the swap transaction to get instructions
-      const swapTxBuf = Buffer.from(swapData.swapTransaction, 'base64');
-      const swapTx = VersionedTransaction.deserialize(swapTxBuf);
+      // Convert instruction data to TransactionInstructions
+      const instructions: TransactionInstruction[] = [];
       
-      // Extract instructions (simplified - in production need to handle LUTs)
-      console.log(`   ✅ Got Jupiter swap route`);
-      return []; // Return empty for now - Jupiter swap is complex with LUTs
+      // Add compute budget instructions if provided
+      if (swapData.computeBudgetInstructions) {
+        for (const ix of swapData.computeBudgetInstructions) {
+          instructions.push(new TransactionInstruction({
+            programId: new PublicKey(ix.programId),
+            keys: ix.accounts.map((acc: any) => ({
+              pubkey: new PublicKey(acc.pubkey),
+              isSigner: acc.isSigner,
+              isWritable: acc.isWritable,
+            })),
+            data: Buffer.from(ix.data, 'base64'),
+          }));
+        }
+      }
 
-    } catch (error) {
-      console.log(`   ⚠️ Jupiter error, proceeding without swap`);
+      // Add setup instructions if provided
+      if (swapData.setupInstructions) {
+        for (const ix of swapData.setupInstructions) {
+          instructions.push(new TransactionInstruction({
+            programId: new PublicKey(ix.programId),
+            keys: ix.accounts.map((acc: any) => ({
+              pubkey: new PublicKey(acc.pubkey),
+              isSigner: acc.isSigner,
+              isWritable: acc.isWritable,
+            })),
+            data: Buffer.from(ix.data, 'base64'),
+          }));
+        }
+      }
+
+      // Add the main swap instruction
+      if (swapData.swapInstruction) {
+        const ix = swapData.swapInstruction;
+        instructions.push(new TransactionInstruction({
+          programId: new PublicKey(ix.programId),
+          keys: ix.accounts.map((acc: any) => ({
+            pubkey: new PublicKey(acc.pubkey),
+            isSigner: acc.isSigner,
+            isWritable: acc.isWritable,
+          })),
+          data: Buffer.from(ix.data, 'base64'),
+        }));
+      }
+
+      // Add cleanup instructions if provided
+      if (swapData.cleanupInstruction) {
+        const ix = swapData.cleanupInstruction;
+        instructions.push(new TransactionInstruction({
+          programId: new PublicKey(ix.programId),
+          keys: ix.accounts.map((acc: any) => ({
+            pubkey: new PublicKey(acc.pubkey),
+            isSigner: acc.isSigner,
+            isWritable: acc.isWritable,
+          })),
+          data: Buffer.from(ix.data, 'base64'),
+        }));
+      }
+
+      console.log(`   ✅ Got ${instructions.length} Jupiter swap instructions`);
+      
+      // Store address lookup tables for later use
+      this.jupiterLookupTables = swapData.addressLookupTableAddresses || [];
+      
+      return instructions;
+
+    } catch (error: any) {
+      console.log(`   ⚠️ Jupiter error: ${error.message?.substring(0, 50) || 'unknown'}`);
       return [];
     }
   }
+
+  private jupiterLookupTables: string[] = [];
 
   private async buildLiquidateInstruction(
     obligation: KaminoObligation,
