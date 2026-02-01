@@ -790,13 +790,29 @@ export class CrossDexExecutor {
   }
 
   private deserializeInstruction(instruction: any): TransactionInstruction {
+    // Jupiter API v6 returns accounts as array of strings (pubkeys) or objects
+    const keys = instruction.accounts.map((account: any, idx: number) => {
+      // Handle both formats: string pubkey or object with pubkey field
+      let pubkeyStr: string;
+      if (typeof account === 'string') {
+        pubkeyStr = account;
+      } else if (account.pubkey) {
+        pubkeyStr = account.pubkey;
+      } else {
+        throw new Error(`Invalid account at index ${idx}: ${JSON.stringify(account)}`);
+      }
+      
+      return {
+        pubkey: new PublicKey(pubkeyStr),
+        // For Jupiter v6, we need to check accountMeta or use defaults
+        isSigner: account.isSigner ?? false,
+        isWritable: account.isWritable ?? true,
+      };
+    });
+
     return new TransactionInstruction({
       programId: new PublicKey(instruction.programId),
-      keys: instruction.accounts.map((key: any) => ({
-        pubkey: new PublicKey(key.pubkey),
-        isSigner: key.isSigner,
-        isWritable: key.isWritable,
-      })),
+      keys,
       data: Buffer.from(instruction.data, 'base64'),
     });
   }
