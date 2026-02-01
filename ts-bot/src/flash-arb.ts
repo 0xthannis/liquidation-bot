@@ -347,10 +347,10 @@ async function executeFlashLoanArbitrage(
   
   console.log(`   💰 Profit: ${profitDisplay.toFixed(6)} ${flashTokenSymbol} (${profitPercent.toFixed(4)}%)`);
   
-  // Only execute if profit > $1 equivalent (skip dust)
+  // Only execute if profit > threshold (lowered to catch more opportunities)
   // For USDC: profit is in micro-USDC, so 1$ = 1_000_000
   // For SOL: profit is in lamports, 1$ ≈ 0.005 SOL = 5_000_000 lamports
-  const minProfitUsd = 1.0; // Minimum $1 profit
+  const minProfitUsd = 0.10; // Minimum $0.10 profit (lowered from $1)
   const profitInUsd = (flashTokenSymbol === 'SOL' || flashTokenSymbol === 'JitoSOL') 
     ? profit / 200_000_000 // ~$200/SOL, so lamports / 200M = USD
     : profit / 1_000_000;  // micro-USDC / 1M = USD
@@ -648,110 +648,36 @@ async function main() {
     priority: PriorityLevel;
   }
 
+  // RESTORED ORIGINAL CONFIG - These amounts were working before!
   const arbConfigs: ArbConfig[] = [
-    // ============ HIGH PRIORITY - Scan frequently! ============
-    // Core SOL pairs - highest volume
-    { flash: 'USDC', swap: 'SOL', amounts: [50000n, 100000n, 500000n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'USDC', amounts: [50n, 100n, 500n], priority: 'HIGH' },
-    
-    // Top memecoins - VERY volatile!
-    { flash: 'USDC', swap: 'BONK', amounts: [10000n, 50000n, 100000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'WIF', amounts: [10000n, 50000n, 100000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'POPCAT', amounts: [10000n, 50000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'MEW', amounts: [10000n, 50000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'BOME', amounts: [10000n, 50000n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'BONK', amounts: [25n, 50n, 100n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'WIF', amounts: [25n, 50n, 100n], priority: 'HIGH' },
-    
-    // Top DeFi - high volume
-    { flash: 'USDC', swap: 'JUP', amounts: [50000n, 100000n, 500000n], priority: 'HIGH' },
-    { flash: 'USDC', swap: 'JTO', amounts: [50000n, 100000n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'JUP', amounts: [50n, 100n, 500n], priority: 'HIGH' },
-    
-    // LST arbitrage - SOL<->LST often has inefficiencies
-    { flash: 'SOL', swap: 'JitoSOL', amounts: [100n, 500n, 1000n], priority: 'HIGH' },
-    { flash: 'SOL', swap: 'mSOL', amounts: [100n, 500n, 1000n], priority: 'HIGH' },
-    
-    // ============ MEDIUM PRIORITY - Scan every ~45-60 sec ============
-    // Secondary memecoins
-    { flash: 'USDC', swap: 'SLERF', amounts: [10000n, 25000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'WEN', amounts: [10000n, 25000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'SAMO', amounts: [10000n, 25000n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'POPCAT', amounts: [25n, 50n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'MEW', amounts: [25n, 50n], priority: 'MEDIUM' },
-    
-    // Other LSTs
-    { flash: 'USDC', swap: 'JitoSOL', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'mSOL', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'bSOL', amounts: [50n, 100n, 500n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'stSOL', amounts: [50n, 100n, 500n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'jupSOL', amounts: [50n, 100n, 500n], priority: 'MEDIUM' },
-    
-    // DeFi tokens
-    { flash: 'USDC', swap: 'RAY', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'ORCA', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'PYTH', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'RENDER', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'USDC', swap: 'HNT', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'RAY', amounts: [50n, 100n], priority: 'MEDIUM' },
-    { flash: 'SOL', swap: 'JTO', amounts: [50n, 100n], priority: 'MEDIUM' },
-    
-    // Gaming
-    { flash: 'USDC', swap: 'GMT', amounts: [50000n, 100000n], priority: 'MEDIUM' },
-    
-    // ============ LOW PRIORITY - Scan every ~3-5 min ============
-    // Stablecoin arb - rarely profitable but worth checking
-    { flash: 'USDC', swap: 'USDT', amounts: [100000n, 500000n, 1000000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'UXD', amounts: [100000n, 500000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'USDH', amounts: [100000n, 500000n], priority: 'LOW' },
-    
-    // Lower LSTs
-    { flash: 'USDC', swap: 'bSOL', amounts: [50000n, 100000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'stSOL', amounts: [50000n, 100000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'jupSOL', amounts: [50000n, 100000n], priority: 'LOW' },
-    
-    // Lower volume DeFi
-    { flash: 'USDC', swap: 'MNDE', amounts: [25000n, 50000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'SLND', amounts: [25000n, 50000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'SHDW', amounts: [25000n, 50000n], priority: 'LOW' },
-    { flash: 'SOL', swap: 'PYTH', amounts: [50n, 100n], priority: 'LOW' },
-    { flash: 'SOL', swap: 'RENDER', amounts: [50n, 100n], priority: 'LOW' },
-    
-    // Gaming tokens
-    { flash: 'USDC', swap: 'ATLAS', amounts: [25000n, 50000n], priority: 'LOW' },
-    { flash: 'USDC', swap: 'DUST', amounts: [25000n, 50000n], priority: 'LOW' },
+    // ============ ORIGINAL PAIRS THAT WORKED - HIGH PRIORITY ============
+    // EXACTLY as before - USDC flash loans up to 1M
+    { flash: 'USDC', swap: 'SOL', amounts: [10000n, 50000n, 100000n, 500000n, 1000000n], priority: 'HIGH' },
+    { flash: 'USDC', swap: 'USDT', amounts: [10000n, 100000n, 500000n], priority: 'HIGH' },
+    { flash: 'USDC', swap: 'JitoSOL', amounts: [10000n, 50000n, 100000n], priority: 'HIGH' },
+    // EXACTLY as before - SOL flash loans up to 1000 SOL  
+    { flash: 'SOL', swap: 'USDC', amounts: [10n, 50n, 100n, 500n, 1000n], priority: 'HIGH' },
+    { flash: 'SOL', swap: 'JitoSOL', amounts: [10n, 100n, 500n], priority: 'HIGH' },
   ];
 
-  // Separate configs by priority
-  const highPriority = arbConfigs.filter(c => c.priority === 'HIGH');
-  const mediumPriority = arbConfigs.filter(c => c.priority === 'MEDIUM');
-  const lowPriority = arbConfigs.filter(c => c.priority === 'LOW');
+  console.log('🔍 Starting arbitrage scanner - ORIGINAL CONFIG RESTORED!\n');
+  console.log(`📊 ${arbConfigs.length} pairs: USDC<->SOL, USDC<->USDT, USDC<->JitoSOL, SOL<->USDC, SOL<->JitoSOL`);
+  console.log('Amounts: 10K to 1M USDC | 10 to 1000 SOL\n');
   
-  console.log('🔍 Starting PRIORITY-BASED arbitrage scanner...\n');
-  console.log(`📊 HIGH priority: ${highPriority.length} pairs (every ~10-15 sec)`);
-  console.log(`📊 MEDIUM priority: ${mediumPriority.length} pairs (every ~45-60 sec)`);
-  console.log(`📊 LOW priority: ${lowPriority.length} pairs (every ~3-5 min)`);
-  console.log('\nHIGH: SOL, BONK, WIF, POPCAT, MEW, BOME, JUP, JTO, JitoSOL, mSOL');
-  console.log('MEDIUM: SLERF, WEN, SAMO, LSTs, RAY, ORCA, PYTH, RENDER, HNT, GMT');
-  console.log('LOW: USDT, UXD, USDH, MNDE, SLND, SHDW, ATLAS, DUST\n');
-  
-  // Timing trackers
-  let lastMediumScan = 0;
-  let lastLowScan = 0;
   let scanCount = 0;
   
-  const MEDIUM_INTERVAL = 45000; // 45 seconds
-  const LOW_INTERVAL = 180000;   // 3 minutes
-  
-  // Helper function to scan a list of configs
-  async function scanConfigs(configs: ArbConfig[], label: string) {
-    for (const config of configs) {
+  // Main loop - ORIGINAL SIMPLE LOOP
+  while (true) {
+    scanCount++;
+    
+    for (const config of arbConfigs) {
       for (const baseAmount of config.amounts) {
+        // Convert to base units
         const decimals = config.flash === 'SOL' || config.flash === 'JitoSOL' ? 9 : 6;
         const amount = baseAmount * BigInt(Math.pow(10, decimals));
         
         try {
-          recordScan();
+          recordScan(); // Track scan for dashboard
           await executeFlashLoanArbitrage(
             connection,
             keypair,
@@ -764,44 +690,22 @@ async function main() {
           // Silently continue
         }
         
-        // Rate limit
+        // Delay to respect Jupiter rate limit (1 RPS on free tier)
         await new Promise(r => setTimeout(r, 1100));
       }
     }
-  }
-  
-  // Main loop - Priority-based scanning
-  while (true) {
-    scanCount++;
-    const now = Date.now();
-    
-    // ALWAYS scan HIGH priority
-    console.log(`\n[Scan #${scanCount}] 🔴 HIGH priority...`);
-    await scanConfigs(highPriority, 'HIGH');
-    
-    // Scan MEDIUM priority every ~45 sec
-    if (now - lastMediumScan >= MEDIUM_INTERVAL) {
-      console.log(`[Scan #${scanCount}] 🟡 MEDIUM priority...`);
-      await scanConfigs(mediumPriority, 'MEDIUM');
-      lastMediumScan = now;
-    }
-    
-    // Scan LOW priority every ~3 min
-    if (now - lastLowScan >= LOW_INTERVAL) {
-      console.log(`[Scan #${scanCount}] 🟢 LOW priority...`);
-      await scanConfigs(lowPriority, 'LOW');
-      lastLowScan = now;
-    }
     
     // Progress indicator
-    if (scanCount % 5 === 0) {
+    if (scanCount % 10 === 0) {
       const newBalance = await connection.getBalance(keypair.publicKey);
       updateWalletBalance(newBalance / LAMPORTS_PER_SOL);
-      console.log(`\n💰 Balance: ${(newBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+      console.log(`\n[Scan #${scanCount}] Balance: ${(newBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
+    } else {
+      process.stdout.write('.');
     }
     
-    // Small delay before next HIGH priority scan
-    await new Promise(r => setTimeout(r, 2000));
+    // Delay between full scans
+    await new Promise(r => setTimeout(r, 5000));
   }
 }
 
