@@ -100,12 +100,14 @@ export class CrossDexExecutor {
       const sellDex = direction === 'raydium_to_orca' ? 'orca' : 'raydium';
 
       // Calculate flash loan amount (in USDC micro-units)
-      // IMPORTANT: Flash loans are FREE capital from Kamino - we don't need our own money!
+      // Flash loans are FREE capital from Kamino - we don't need our own money!
       // The only cost is: Kamino fee (0.001%) + Jito tip + priority fees
-      // We need ~0.01 SOL in wallet for fees, which you have ($22 = ~0.1 SOL)
       // 
-      // Strategy: Use $1k-$5k to minimize slippage while maximizing profit
-      const flashAmountUsd = Math.min(5000, Math.max(1000, swapAmountUsd * 0.05));
+      // MAXIMIZE PROFIT: Borrow as much as possible!
+      // Limit: Kamino USDC reserve liquidity (~$50M available)
+      // But also consider slippage - larger amounts = more slippage
+      // Sweet spot: $50k-$500k depending on pool depth
+      const flashAmountUsd = Math.min(500000, Math.max(50000, swapAmountUsd * 0.5));
       const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000)); // USDC has 6 decimals
 
       console.log(`   Flash Loan: $${flashAmountUsd.toLocaleString()} USDC`);
