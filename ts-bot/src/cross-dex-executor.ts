@@ -578,7 +578,7 @@ export class CrossDexExecutor {
         instructions.push(this.deserializeInstruction(ix));
       }
       // Debug: log swapInstruction structure
-      console.log(`   🔍 swapInstruction keys: ${Object.keys(swapIx1.swapInstruction || {}).join(', ')}`);
+      console.log(`   🔍 swapInstruction: ${JSON.stringify(swapIx1.swapInstruction).slice(0, 200)}`);
       instructions.push(this.deserializeInstruction(swapIx1.swapInstruction));
       if (swapIx1.cleanupInstruction) {
         instructions.push(this.deserializeInstruction(swapIx1.cleanupInstruction));
@@ -793,7 +793,25 @@ export class CrossDexExecutor {
   }
 
   private deserializeInstruction(instruction: any): TransactionInstruction {
-    // Jupiter API v6 returns accounts as array of strings (pubkeys) or objects
+    // Jupiter API v6 can return instructions in different formats:
+    // 1. Object with programId, accounts, data
+    // 2. Array format [programIdIndex, accountIndices, data] (when part of compiled message)
+    
+    // Check if it's an array (compiled format) - keys are 0, 1, 2
+    if (Array.isArray(instruction) || (instruction[0] !== undefined && instruction.programId === undefined)) {
+      // This is a compiled instruction format, need to handle differently
+      // For now, throw a more informative error
+      throw new Error(`Instruction is in compiled array format: ${JSON.stringify(instruction).slice(0, 100)}`);
+    }
+    
+    // Standard object format
+    if (!instruction.programId) {
+      throw new Error(`Missing programId in instruction: ${JSON.stringify(Object.keys(instruction))}`);
+    }
+    if (!instruction.accounts) {
+      throw new Error(`Missing accounts in instruction: ${JSON.stringify(Object.keys(instruction))}`);
+    }
+    
     const keys = instruction.accounts.map((account: any, idx: number) => {
       // Handle both formats: string pubkey or object with pubkey field
       let pubkeyStr: string;
@@ -807,7 +825,6 @@ export class CrossDexExecutor {
       
       return {
         pubkey: new PublicKey(pubkeyStr),
-        // For Jupiter v6, we need to check accountMeta or use defaults
         isSigner: account.isSigner ?? false,
         isWritable: account.isWritable ?? true,
       };
