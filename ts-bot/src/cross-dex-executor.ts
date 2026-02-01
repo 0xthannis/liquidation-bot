@@ -21,6 +21,7 @@ import {
   getAccount
 } from '@solana/spl-token';
 import { KaminoMarket, KaminoReserve, getFlashLoanInstructions, PROGRAM_ID } from '@kamino-finance/klend-sdk';
+import BN from 'bn.js';
 import fetch from 'node-fetch';
 import { CrossDexOpportunity, crossDexStats } from './cross-dex-monitor';
 import { recordTrade, botStats } from './api-server';
@@ -343,7 +344,8 @@ export class CrossDexExecutor {
 
       // Use the best amount found
       const flashAmountUsd = bestAmount;
-      const flashAmount = BigInt(Math.floor(flashAmountUsd * 1_000_000));
+      const flashAmountNum = Math.floor(flashAmountUsd * 1_000_000);
+      const flashAmount = new BN(flashAmountNum); // BN for Kamino SDK
       const profitUsd = bestProfit;
 
       console.log(`   ✅ OPTIMAL: $${flashAmountUsd.toLocaleString()} → profit: $${profitUsd.toFixed(2)}`);

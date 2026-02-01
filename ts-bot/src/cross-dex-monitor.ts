@@ -234,23 +234,20 @@ export class CrossDexMonitor {
     this.lastPriceCheck = now;
 
     try {
-      // Fetch prices from ALL DEXes
-      const [raydiumPrice, orcaPrice, pumpswapPrice] = await Promise.all([
+      // Fetch prices from Raydium & Orca only (PumpSwap is for memecoins, no SOL/USDC pool)
+      const [raydiumPrice, orcaPrice] = await Promise.all([
         this.getCachedPrice(pool.tokenA, pool.tokenB, 'raydium'),
         this.getCachedPrice(pool.tokenA, pool.tokenB, 'orca'),
-        this.getCachedPrice(pool.tokenA, pool.tokenB, 'pumpswap'),
       ]);
 
       console.log(`📊 ${pair} prices:`);
       console.log(`   Raydium:  ${raydiumPrice ? `$${raydiumPrice.toFixed(4)}` : '❌'}`);
       console.log(`   Orca:     ${orcaPrice ? `$${orcaPrice.toFixed(4)}` : '❌'}`);
-      console.log(`   PumpSwap: ${pumpswapPrice ? `$${pumpswapPrice.toFixed(4)}` : '❌'}`);
 
-      // Find the best arbitrage opportunity across all pairs
+      // Find the best arbitrage opportunity across Raydium & Orca
       const prices: { dex: string; price: number }[] = [];
       if (raydiumPrice) prices.push({ dex: 'raydium', price: raydiumPrice });
       if (orcaPrice) prices.push({ dex: 'orca', price: orcaPrice });
-      if (pumpswapPrice) prices.push({ dex: 'pumpswap', price: pumpswapPrice });
 
       if (prices.length < 2) {
         console.log(`   ⚠️ Need at least 2 DEX prices`);
