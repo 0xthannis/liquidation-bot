@@ -270,9 +270,22 @@ export class CrossDexMonitor {
       console.log(`   Best spread: ${minPrice.dex.toUpperCase()} → ${maxPrice.dex.toUpperCase()}`);
       console.log(`   Spread: ${spreadPercent.toFixed(3)}% ($${potentialProfitUsd.toFixed(2)} potential)`);
 
+      // Record all scans for frontend display
+      recordTrade({
+        pair,
+        type: 'cross_dex',
+        amount: swapAmountUsd,
+        profit: potentialProfitUsd,
+        profitUsd: potentialProfitUsd,
+        status: spreadPercent >= this.minSpreadPercent ? 'opportunity_detected' : 'not_profitable',
+        txSignature: '',
+        details: `${minPrice.dex} → ${maxPrice.dex}: Spread ${spreadPercent.toFixed(3)}%`,
+      });
+
       if (spreadPercent < this.minSpreadPercent) {
         console.log(`   Status: ❌ Not profitable (need >${this.minSpreadPercent}%)`);
         crossDexStats.missedReasons.spreadTooLow++;
+        crossDexStats.opportunitiesMissed++;
         return;
       }
 
