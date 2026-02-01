@@ -525,6 +525,7 @@ export class CrossDexExecutor {
     
     console.log(`   💸 Jito tip: ${(tipLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL (~$${tipUsd.toFixed(2)})`);
     console.log(`   💰 Net profit after tip: $${netProfitUsd.toFixed(2)}`);
+    console.log(`   🔧 Building transaction...`);
 
     instructions.push(SystemProgram.transfer({
       fromPubkey: this.keypair.publicKey,
@@ -532,9 +533,13 @@ export class CrossDexExecutor {
       lamports: tipLamports,
     }));
 
-    // Ensure ATAs exist
-    await this.ensureAta(instructions, usdcMint);
-    await this.ensureAta(instructions, solMint);
+    // Ensure ATAs exist (with retry for rate limiting)
+    try {
+      await this.ensureAta(instructions, usdcMint);
+      await this.ensureAta(instructions, solMint);
+    } catch (ataError) {
+      console.log(`   ⚠️ ATA check failed, continuing: ${ataError}`);
+    }
 
     // Record flash borrow index
     const flashBorrowIndex = instructions.length;
@@ -575,8 +580,23 @@ export class CrossDexExecutor {
     });
     instructions.push(flashRepayIxCorrected);
 
-    // Build versioned transaction
-    const blockhash = await this.connection.getLatestBlockhash('finalized');
+    // Build versioned transaction (with retry for rate limiting)
+    console.log(`   📦 Getting blockhash...`);
+    let blockhash;
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        blockhash = await this.connection.getLatestBlockhash('finalized');
+        break;
+      } catch (e) {
+        if (retry < 2) {
+          console.log(`   ⏳ RPC rate limited, waiting ${(retry + 1) * 500}ms...`);
+          await new Promise(r => setTimeout(r, (retry + 1) * 500));
+        } else {
+          throw e;
+        }
+      }
+    }
+    if (!blockhash) throw new Error('Failed to get blockhash');
     
     const messageV0 = new TransactionMessage({
       payerKey: this.keypair.publicKey,
