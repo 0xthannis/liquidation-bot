@@ -127,32 +127,32 @@ export class CrossDexExecutor {
     const maxKaminoBorrow = kaminoLiquidityUsd * 0.9;
     
     // Get DEX pool reserves to estimate max safe trade size
-    let maxDexTrade = 10_000_000; // Default 10M if can't fetch
+    // For big pools (Raydium/Orca SOL-USDC), we can trade larger amounts
+    // Use 5% of pool for established pairs, slippage is manageable
+    let maxDexTrade = 500_000; // Default $500K - reasonable for major pairs
     
     try {
-      // For Raydium/Orca, estimate max trade as 2% of pool to minimize slippage
-      if (buyDex === 'raydium') {
+      const POOL_PERCENT = 0.05; // 5% of pool liquidity
+      
+      if (buyDex === 'raydium' || sellDex === 'raydium') {
         const balance = await this.connection.getTokenAccountBalance(POOLS.raydium.pcVault);
         const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02); // Max 2% of pool
-      } else if (buyDex === 'orca') {
-        const balance = await this.connection.getTokenAccountBalance(POOLS.orca.tokenVaultB);
-        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * POOL_PERCENT);
       }
       
-      if (sellDex === 'raydium') {
-        const balance = await this.connection.getTokenAccountBalance(POOLS.raydium.pcVault);
-        const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
-      } else if (sellDex === 'orca') {
+      if (buyDex === 'orca' || sellDex === 'orca') {
         const balance = await this.connection.getTokenAccountBalance(POOLS.orca.tokenVaultB);
         const poolUsdcLiquidity = Number(balance.value.amount) / 1_000_000;
-        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * 0.02);
+        maxDexTrade = Math.min(maxDexTrade, poolUsdcLiquidity * POOL_PERCENT);
       }
+      
+      // PumpSwap - use default, it's usually for memecoins with variable liquidity
     } catch (error) {
       // Use default if pool fetch fails
     }
+    
+    // Minimum floor - don't go below $5K even for small pools
+    maxDexTrade = Math.max(maxDexTrade, 5_000);
     
     // Calculate max safe amount
     const maxSafeAmount = Math.min(maxKaminoBorrow, maxDexTrade);
@@ -171,8 +171,8 @@ export class CrossDexExecutor {
       validAmounts = [Math.floor(maxSafeAmount), ...validAmounts];
     }
     
-    // If no valid amounts (liquidity too low), use what we have
-    if (validAmounts.length === 0 && maxSafeAmount >= 10_000) {
+    // If no valid amounts, use max safe amount if >= $5K
+    if (validAmounts.length === 0 && maxSafeAmount >= 5_000) {
       validAmounts = [Math.floor(maxSafeAmount)];
     }
     
