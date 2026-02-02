@@ -293,27 +293,31 @@ export class Executor {
           logger.error('[Executor] Failed to build Raydium buy transaction');
           return [];
         }
-        // Extract instructions from Raydium transaction
+        // Extract instructions from Raydium versioned transaction
         const buyTx = VersionedTransaction.deserialize(buyTxBuffer);
-        const buyIxs = this.extractInstructionsFromVersionedTx(buyTx);
+        const buyIxs = await this.extractInstructionsFromVersionedTx(buyTx);
         instructions.push(...buyIxs);
         logger.info(`[Executor] Raydium buy: ${buyIxs.length} instructions`);
       } else if (opportunity.buyDex === 'orca') {
-        const buyTx = await this.orcaClient.buildSwapTransaction(
+        const buyTxBuilder = await this.orcaClient.buildSwapTransaction(
           usdcMint,
           baseMint,
           new BN(usdcAmountIn),
           this.keypair.publicKey,
           1 // 1% slippage
         );
-        if (!buyTx) {
+        if (!buyTxBuilder) {
           logger.error('[Executor] Failed to build Orca buy transaction');
           return [];
         }
-        // Orca returns TransactionBuilder, extract instructions
-        const buyInstructions = buyTx.compressIx(true);
-        instructions.push(...buyInstructions);
-        logger.info(`[Executor] Orca buy: ${buyInstructions.length} instructions`);
+        // Orca TransactionBuilder.compressIx(false) returns Instruction with instructions array
+        const buyIx = buyTxBuilder.compressIx(false);
+        instructions.push(...buyIx.instructions);
+        // Add cleanup instructions at the end (close WSOL accounts etc)
+        if (buyIx.cleanupInstructions?.length > 0) {
+          instructions.push(...buyIx.cleanupInstructions);
+        }
+        logger.info(`[Executor] Orca buy: ${buyIx.instructions.length} instructions`);
       }
 
       // STEP 2: Sell token on sellDex (baseToken → USDC)
@@ -329,26 +333,30 @@ export class Executor {
           logger.error('[Executor] Failed to build Raydium sell transaction');
           return [];
         }
-        // Extract instructions from Raydium transaction
+        // Extract instructions from Raydium versioned transaction
         const sellTx = VersionedTransaction.deserialize(sellTxBuffer);
-        const sellIxs = this.extractInstructionsFromVersionedTx(sellTx);
+        const sellIxs = await this.extractInstructionsFromVersionedTx(sellTx);
         instructions.push(...sellIxs);
         logger.info(`[Executor] Raydium sell: ${sellIxs.length} instructions`);
       } else if (opportunity.sellDex === 'orca') {
-        const sellTx = await this.orcaClient.buildSwapTransaction(
+        const sellTxBuilder = await this.orcaClient.buildSwapTransaction(
           baseMint,
           usdcMint,
           new BN(expectedTokenAmount),
           this.keypair.publicKey,
           1 // 1% slippage
         );
-        if (!sellTx) {
+        if (!sellTxBuilder) {
           logger.error('[Executor] Failed to build Orca sell transaction');
           return [];
         }
-        const sellInstructions = sellTx.compressIx(true);
-        instructions.push(...sellInstructions);
-        logger.info(`[Executor] Orca sell: ${sellInstructions.length} instructions`);
+        // Orca TransactionBuilder.compressIx(false) returns Instruction with instructions array
+        const sellIx = sellTxBuilder.compressIx(false);
+        instructions.push(...sellIx.instructions);
+        if (sellIx.cleanupInstructions?.length > 0) {
+          instructions.push(...sellIx.cleanupInstructions);
+        }
+        logger.info(`[Executor] Orca sell: ${sellIx.instructions.length} instructions`);
       }
 
       // STEP 3: Add Jito tip instruction
@@ -376,23 +384,58 @@ export class Executor {
 
   /**
    * Extract instructions from a VersionedTransaction
-   * Needed because Raydium API returns full transactions
+   * Handles both static accounts and address lookup tables
    */
-  private extractInstructionsFromVersionedTx(tx: VersionedTransaction): TransactionInstruction[] {
+  private async extractInstructionsFromVersionedTx(tx: VersionedTransaction): Promise<TransactionInstruction[]> {
     const message = tx.message;
     const instructions: TransactionInstruction[] = [];
     
-    // Get account keys from the message
-    const accountKeys = message.staticAccountKeys;
+    // Get all account keys (static + from lookup tables)
+    let allAccountKeys: PublicKey[] = [...message.staticAccountKeys];
+    
+    // If there are address lookup tables, resolve them
+    if (message.addressTableLookups && message.addressTableLookups.length > 0) {
+      for (const lookup of message.addressTableLookups) {
+        try {
+          const lookupTableAccount = await this.connection.getAddressLookupTable(lookup.accountKey);
+          if (lookupTableAccount.value) {
+            // Add writable accounts
+            for (const idx of lookup.writableIndexes) {
+              allAccountKeys.push(lookupTableAccount.value.state.addresses[idx]);
+            }
+            // Add readonly accounts
+            for (const idx of lookup.readonlyIndexes) {
+              allAccountKeys.push(lookupTableAccount.value.state.addresses[idx]);
+            }
+          }
+        } catch (e) {
+          logger.warn(`[Executor] Failed to resolve lookup table: ${e}`);
+        }
+      }
+    }
     
     // Convert each compiled instruction to TransactionInstruction
     for (const ix of message.compiledInstructions) {
-      const programId = accountKeys[ix.programIdIndex];
-      const keys = ix.accountKeyIndexes.map(idx => ({
-        pubkey: accountKeys[idx],
-        isSigner: tx.message.isAccountSigner(idx),
-        isWritable: tx.message.isAccountWritable(idx),
-      }));
+      const programId = allAccountKeys[ix.programIdIndex];
+      if (!programId) {
+        logger.warn(`[Executor] Missing programId at index ${ix.programIdIndex}`);
+        continue;
+      }
+      
+      const keys = ix.accountKeyIndexes.map(idx => {
+        const pubkey = allAccountKeys[idx];
+        if (!pubkey) {
+          logger.warn(`[Executor] Missing account at index ${idx}`);
+          return null;
+        }
+        return {
+          pubkey,
+          isSigner: idx < message.header.numRequiredSignatures,
+          isWritable: idx < message.header.numRequiredSignatures - message.header.numReadonlySignedAccounts ||
+                     (idx >= message.header.numRequiredSignatures && 
+                      idx < allAccountKeys.length - message.header.numReadonlyUnsignedAccounts),
+        };
+      }).filter(k => k !== null) as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[];
       
       instructions.push(new TransactionInstruction({
         programId,
