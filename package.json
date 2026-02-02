@@ -15,7 +15,7 @@
     "@kamino-finance/klend-sdk": "^3.2.1",
     "@meteora-ag/dlmm": "^1.0.0",
     "@orca-so/whirlpools-sdk": "^0.13.0",
-    "@raydium-io/raydium-sdk-v2": "^0.1.0",
+    "@raydium-io/raydium-sdk-v2": "latest",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.8",
     "bn.js": "^5.2.1",
