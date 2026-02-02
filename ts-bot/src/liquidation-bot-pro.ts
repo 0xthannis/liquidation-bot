@@ -206,6 +206,26 @@ export class LiquidationBotPro {
     this.keypair = keypair;
   }
 
+  // Retry with exponential backoff
+  private async retryWithBackoff<T>(fn: () => Promise<T>, maxRetries: number): Promise<T> {
+    let lastError: Error | null = null;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn();
+      } catch (e: any) {
+        lastError = e;
+        if (e.message?.includes('429') || e.message?.includes('Too Many Requests')) {
+          const delay = Math.pow(2, i) * 2000; // 2s, 4s, 8s, 16s, 32s
+          console.log(`   ⏳ Rate limited, waiting ${delay/1000}s...`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw lastError;
+  }
+
   // ============================================
   // INITIALIZATION
   // ============================================
@@ -214,20 +234,24 @@ export class LiquidationBotPro {
     const startTime = Date.now();
     console.log('🚀 Initializing Liquidation Bot PRO...\n');
 
-    // Load Kamino market
+    // Load Kamino market with retry
     console.log('📦 Loading Kamino market...');
-    this.market = await KaminoMarket.load(
-      this.connection,
-      KAMINO_MAIN_MARKET,
-      undefined as any,
-      PROGRAM_ID
-    );
+    this.market = await this.retryWithBackoff(async () => {
+      return await KaminoMarket.load(
+        this.connection,
+        KAMINO_MAIN_MARKET,
+        undefined as any,
+        PROGRAM_ID
+      );
+    }, 5);
 
     if (!this.market) {
       throw new Error('Failed to load Kamino market');
     }
 
-    await this.market.loadReserves();
+    await this.retryWithBackoff(async () => {
+      await this.market!.loadReserves();
+    }, 5);
     console.log(`   ✅ Loaded ${this.market.reserves.size} reserves\n`);
 
     // Build reserve → symbol mapping
