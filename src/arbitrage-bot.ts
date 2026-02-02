@@ -17,8 +17,8 @@ const CONFIG = {
   RPC_URL: process.env.RPC_URL || 'https://api.mainnet-beta.solana.com',
   MAX_RPC_REQUESTS_PER_SEC: parseInt(process.env.MAX_RPC_REQUESTS_PER_SEC || '20'),
   
-  // Scanning
-  SCAN_INTERVAL_MS: parseInt(process.env.SCAN_INTERVAL_MS || '1000'),
+  // Scanning (5 seconds to avoid Jupiter rate limits)
+  SCAN_INTERVAL_MS: parseInt(process.env.SCAN_INTERVAL_MS || '5000'),
   
   // Profit thresholds
   MIN_PROFIT_USD: parseFloat(process.env.MIN_PROFIT_USD || '10'),

@@ -41,7 +41,8 @@ export const TOKEN_DECIMALS: Record<string, number> = {
 /**
  * DEX identifiers
  */
-export const DEX_LIST = ['raydium', 'orca', 'meteora', 'phoenix'] as const;
+// Only scan 2 DEXes to reduce API calls (Jupiter free tier is very limited)
+export const DEX_LIST = ['raydium', 'orca'] as const;
 export type DexName = typeof DEX_LIST[number];
 
 /**
@@ -185,8 +186,8 @@ export class Scanner {
         // Skip this DEX
       }
 
-      // Rate limit: wait between requests
-      await this.sleep(200);
+      // Rate limit: wait 500ms between requests (Jupiter free tier)
+      await this.sleep(500);
     }
 
     return quotes;
@@ -267,11 +268,9 @@ export class Scanner {
       'WIF/USDC': 2_000_000,
     };
 
-    const dexMultiplier: Record<DexName, number> = {
+    const dexMultiplier: Record<string, number> = {
       raydium: 1.0,
       orca: 0.8,
-      meteora: 0.6,
-      phoenix: 0.4,
     };
 
     return (baseLiquidity[pair] || 1_000_000) * (dexMultiplier[dex] || 0.5);
