@@ -12,7 +12,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "0.31.0",
     "@coral-xyz/borsh": "0.31.0",
-    "@ellipsis-labs/phoenix-sdk": "^2.0.4",
+    "@ellipsis-labs/phoenix-sdk": "^1.4.2",
     "@kamino-finance/klend-sdk": "^7.1.6",
     "@meteora-ag/dlmm": "^1.9.3",
     "@orca-so/whirlpools-sdk": "^0.13.12",
@@ -33,6 +33,8 @@
   },
   "overrides": {
     "@coral-xyz/anchor": "0.31.0",
-    "@coral-xyz/borsh": "0.31.0"
+    "@coral-xyz/borsh": "0.31.0",
+    "@solana/kit": "2.3.0",
+    "@solana/sysvars": "2.3.0"
   }
 }
