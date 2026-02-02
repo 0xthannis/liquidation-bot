@@ -14,7 +14,16 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
+
+// Helper to derive ATA (compatible with all spl-token versions)
+function getATA(mint: PublicKey, owner: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return ata;
+}
 import { logger } from './utils/logger.js';
 import { ArbitrageOpportunity, calculateJitoTip, calculateNetProfitAfterTip } from './profit-calculator.js';
 import { KaminoFlashLoanClient } from './kamino-flash-loan.js';

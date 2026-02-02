@@ -18,8 +18,17 @@ import {
   PROGRAM_ID as KAMINO_PROGRAM_ID,
   getFlashLoanInstructions,
 } from '@kamino-finance/klend-sdk';
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import Decimal from 'decimal.js';
+
+// Helper to derive ATA (compatible with all spl-token versions)
+function getATA(mint: PublicKey, owner: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return ata;
+}
 
 // Kamino Main Market address
 const KAMINO_MAIN_MARKET = new PublicKey('7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
@@ -136,10 +145,7 @@ export class KaminoFlashLoanClient {
       }
 
       // Get borrower's ATA for this token
-      const destinationAta = await getAssociatedTokenAddress(
-        tokenMint,
-        borrowerKeypair.publicKey
-      );
+      const destinationAta = getATA(tokenMint, borrowerKeypair.publicKey);
 
       // Get lending market authority
       const lendingMarketAuthority = await this.market!.getLendingMarketAuthority();
