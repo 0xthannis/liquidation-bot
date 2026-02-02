@@ -37,11 +37,14 @@ const CONFIG = {
   // Full refresh interval (ms) - 60 minutes
   FULL_REFRESH_INTERVAL_MS: 60 * 60 * 1000,
   
-  // Parallel batches for fetching obligations (Alchemy = 25 req/sec)
-  PARALLEL_BATCHES: 10,
+  // Parallel batches for fetching (optimized for free RPC)
+  PARALLEL_BATCHES: 5,
   
   // Batch size for getMultipleAccountsInfo
-  BATCH_SIZE: 100,
+  BATCH_SIZE: 50,
+  
+  // Delay between batches (ms) to stay within rate limits
+  BATCH_DELAY_MS: 150,
   
   // Price change threshold to trigger check (0.1% = 0.001)
   PRICE_CHANGE_THRESHOLD: 0.001,
@@ -51,6 +54,12 @@ const CONFIG = {
   
   // Kamino flash loan fee (0.001% = 0.00001)
   FLASH_LOAN_FEE: 0.00001,
+  
+  // Only fetch obligations with borrowed value > this threshold (USD)
+  MIN_BORROW_THRESHOLD_USD: 10,
+  
+  // High priority LTV threshold (fetch these first)
+  HIGH_RISK_LTV: 0.70,
 };
 
 // Kamino Main Market
@@ -279,35 +288,48 @@ export class LiquidationBotPro {
 
   private async fullRefresh(): Promise<void> {
     const startTime = Date.now();
-    console.log('🔄 Starting full obligation refresh...\n');
+    console.log('🔄 Starting optimized obligation refresh...\n');
 
-    // Step 1: Fetch all obligation pubkeys
-    console.log('   📡 Fetching obligation pubkeys...');
+    // Step 1: Fetch obligation pubkeys with borrowed value filter
+    // We fetch a slice of the data to check if they have borrows
+    console.log('   📡 Fetching active obligations (with borrows)...');
     const OBLIGATION_SIZE = 3344;
     
-    const accounts = await this.connection.getProgramAccounts(
-      PROGRAM_ID,
-      {
-        filters: [
-          { dataSize: OBLIGATION_SIZE },
-          {
-            memcmp: {
-              offset: 32,
-              bytes: KAMINO_MAIN_MARKET.toBase58(),
+    // Fetch with data slice to get borrowed value field (offset ~200-208 for borrowedValue)
+    const accounts = await this.retryWithBackoff(async () => {
+      return await this.connection.getProgramAccounts(
+        PROGRAM_ID,
+        {
+          filters: [
+            { dataSize: OBLIGATION_SIZE },
+            {
+              memcmp: {
+                offset: 32,
+                bytes: KAMINO_MAIN_MARKET.toBase58(),
+              },
             },
-          },
-        ],
-        dataSlice: { offset: 0, length: 0 }, // Just pubkeys
-      }
-    );
+          ],
+        }
+      );
+    }, 5);
 
     liquidationStats.totalObligations = accounts.length;
-    console.log(`   ✅ Found ${accounts.length.toLocaleString()} obligation accounts\n`);
+    console.log(`   ✅ Found ${accounts.length.toLocaleString()} total obligation accounts`);
 
-    // Step 2: Fetch full data in parallel batches
-    console.log('   📥 Fetching obligation data in parallel...');
-    const pubkeys = accounts.map(a => a.pubkey);
-    const allData = await this.fetchInParallelBatches(pubkeys);
+    // Step 2: Quick filter - only keep obligations with non-zero borrowed value
+    // The borrowedValueSf field is at offset 200 in the Obligation struct
+    const activeObligations: { pubkey: PublicKey; data: Buffer }[] = [];
+    
+    for (const account of accounts) {
+      const data = account.account.data as Buffer;
+      // Check borrowedValueSf at offset 200 (8 bytes u64)
+      const borrowedValueSf = data.readBigUInt64LE(200);
+      if (borrowedValueSf > 0n) {
+        activeObligations.push({ pubkey: account.pubkey, data });
+      }
+    }
+
+    console.log(`   ✅ Filtered to ${activeObligations.length.toLocaleString()} active obligations (with borrows)\n`);
 
     // Step 3: Parse and index obligations
     console.log('\n   🔍 Parsing and indexing obligations...');
@@ -325,34 +347,47 @@ export class LiquidationBotPro {
     }
 
     let parsedCount = 0;
-    let withBorrows = 0;
+    let highRiskCount = 0;
 
-    for (let i = 0; i < pubkeys.length; i++) {
-      const data = allData[i];
-      if (!data) continue;
+    // Sort by borrowed value (highest first) to prioritize risky positions
+    activeObligations.sort((a, b) => {
+      const aBorrow = a.data.readBigUInt64LE(200);
+      const bBorrow = b.data.readBigUInt64LE(200);
+      return bBorrow > aBorrow ? 1 : bBorrow < aBorrow ? -1 : 0;
+    });
 
-      const indexed = this.parseAndIndexObligation(pubkeys[i], data);
+    for (let i = 0; i < activeObligations.length; i++) {
+      const { pubkey, data } = activeObligations[i];
+
+      const indexed = this.parseAndIndexObligation(pubkey, data);
       if (indexed) {
         this.allObligations.push(indexed);
         parsedCount++;
-        if (indexed.totalBorrowedUsd > 0) {
-          withBorrows++;
-          this.addToPriceIndex(indexed);
+        this.addToPriceIndex(indexed);
+        
+        // Count high-risk positions
+        const totalCollateralUsd = indexed.collaterals.reduce((sum, c) => sum + c.valueUsd, 0);
+        if (indexed.totalBorrowedUsd > 0 && totalCollateralUsd > 0) {
+          const ltv = indexed.totalBorrowedUsd / totalCollateralUsd;
+          if (ltv >= CONFIG.HIGH_RISK_LTV) {
+            highRiskCount++;
+          }
         }
       }
 
-      // Progress update
-      if ((i + 1) % 10000 === 0) {
-        console.log(`   ... processed ${(i + 1).toLocaleString()}/${pubkeys.length.toLocaleString()}`);
+      // Progress update every 5000
+      if ((i + 1) % 5000 === 0) {
+        console.log(`   ... processed ${(i + 1).toLocaleString()}/${activeObligations.length.toLocaleString()}`);
       }
     }
 
     liquidationStats.indexedObligations = parsedCount;
-    liquidationStats.obligationsWithBorrows = withBorrows;
+    liquidationStats.obligationsWithBorrows = parsedCount; // All are active now
     liquidationStats.lastRefreshTime = Date.now();
 
     const elapsed = (Date.now() - startTime) / 1000;
-    console.log(`\n   ✅ Indexed ${parsedCount.toLocaleString()} obligations (${withBorrows.toLocaleString()} with borrows) in ${elapsed.toFixed(1)}s`);
+    console.log(`\n   ✅ Indexed ${parsedCount.toLocaleString()} active obligations in ${elapsed.toFixed(1)}s`);
+    console.log(`   ⚠️  ${highRiskCount} high-risk positions (LTV > ${CONFIG.HIGH_RISK_LTV * 100}%)`);
     
     // Log index stats
     console.log('\n   📊 Price Index Stats:');
