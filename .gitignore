@@ -3,6 +3,5 @@ node_modules/
 dist/
 *.log
 ts-bot/
-frontend-dashboard/
 target/
 Cargo.lock
