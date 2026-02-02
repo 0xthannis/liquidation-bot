@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Multi-DEX Flash Loan Arbitrage Bot with Kamino",
   "main": "src/arbitrage-bot.ts",
-  "type": "module",
   "scripts": {
     "start": "tsx src/arbitrage-bot.ts",
     "dev": "tsx --watch src/arbitrage-bot.ts",
