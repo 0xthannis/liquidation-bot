@@ -1,8 +1,7 @@
 import 'dotenv/config';
-import { Keypair } from '@solana/web3.js';
+import { Connection, Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 import express from 'express';
-import { ThrottledConnection } from './utils/throttled-connection.js';
 import { logger } from './utils/logger.js';
 import { Scanner, TRADING_PAIRS, DEX_LIST } from './scanner.js';
 import { Executor } from './executor.js';
@@ -64,7 +63,7 @@ const stats: BotStats = {
 // ============================================
 
 class ArbitrageBot {
-  private connection: ThrottledConnection;
+  private connection: Connection;
   private keypair: Keypair;
   private scanner: Scanner;
   private executor: Executor;
@@ -72,11 +71,8 @@ class ArbitrageBot {
   private scanTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    // Initialize connection with throttling
-    this.connection = new ThrottledConnection(
-      CONFIG.RPC_URL,
-      CONFIG.MAX_RPC_REQUESTS_PER_SEC
-    );
+    // Initialize connection
+    this.connection = new Connection(CONFIG.RPC_URL, 'confirmed');
 
     // Load wallet
     const privateKey = process.env.WALLET_PRIVATE_KEY;
@@ -100,6 +96,10 @@ class ArbitrageBot {
     logger.info(`Min Profit: $${CONFIG.MIN_PROFIT_USD}`);
     logger.info(`Scan Interval: ${CONFIG.SCAN_INTERVAL_MS}ms`);
     console.log('');
+
+    // Initialize DEX clients
+    await this.scanner.initialize();
+    await this.executor.initialize();
 
     // Start API server if enabled
     if (CONFIG.ENABLE_API) {

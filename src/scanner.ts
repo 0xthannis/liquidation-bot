@@ -1,9 +1,17 @@
-import { PublicKey } from '@solana/web3.js';
-import fetch from 'node-fetch';
-import { ThrottledConnection } from './utils/throttled-connection.js';
+/**
+ * Multi-DEX Price Scanner
+ * Uses native DEX SDKs for accurate price fetching
+ * Supports: Raydium, Orca, Meteora, Phoenix
+ */
+
+import { Connection } from '@solana/web3.js';
 import { logger } from './utils/logger.js';
 import { findBestOpportunity, ArbitrageOpportunity } from './profit-calculator.js';
 import { calculateOptimalAmount } from './dynamic-sizer.js';
+import { RaydiumClient } from './dex-integrations/raydium.js';
+import { OrcaClient } from './dex-integrations/orca.js';
+import { MeteoraClient } from './dex-integrations/meteora.js';
+import { PhoenixClient } from './dex-integrations/phoenix.js';
 
 /**
  * Trading pairs to monitor
@@ -17,32 +25,9 @@ export const TRADING_PAIRS = [
 ];
 
 /**
- * Token mint addresses
+ * DEX identifiers - all 4 DEXes with direct SDK access
  */
-export const TOKEN_MINTS: Record<string, string> = {
-  'SOL': 'So11111111111111111111111111111111111111112',
-  'USDC': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  'JUP': 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-  'JTO': 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
-  'BONK': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-  'WIF': 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
-};
-
-// Token decimals for price calculation
-export const TOKEN_DECIMALS: Record<string, number> = {
-  'SOL': 9,
-  'USDC': 6,
-  'JUP': 6,
-  'JTO': 9,
-  'BONK': 5,
-  'WIF': 6,
-};
-
-/**
- * DEX identifiers
- */
-// Only scan 2 DEXes to reduce API calls (Jupiter free tier is very limited)
-export const DEX_LIST = ['raydium', 'orca'] as const;
+export const DEX_LIST = ['raydium', 'orca', 'meteora', 'phoenix'] as const;
 export type DexName = typeof DEX_LIST[number];
 
 /**
@@ -57,71 +42,56 @@ export interface PriceQuote {
 }
 
 /**
- * Price cache to avoid redundant fetches
- */
-interface PriceCache {
-  quotes: Map<string, PriceQuote>;
-  lastUpdate: number;
-}
-
-/**
  * Multi-DEX Price Scanner
- * Fetches prices from multiple DEXes and finds arbitrage opportunities
+ * Fetches prices from multiple DEXes using their native SDKs
  */
 export class Scanner {
-  private connection: ThrottledConnection;
-  private priceCache: PriceCache = { quotes: new Map(), lastUpdate: 0 };
-  private readonly cacheDurationMs = 1000; // 1 second cache
+  private connection: Connection;
+  private raydiumClient: RaydiumClient;
+  private orcaClient: OrcaClient;
+  private meteoraClient: MeteoraClient;
+  private phoenixClient: PhoenixClient;
   private scanCount = 0;
   private opportunitiesFound = 0;
-  private jupiterApiKey: string;
+  private initialized = false;
 
-  constructor(connection: ThrottledConnection) {
+  constructor(connection: Connection) {
     this.connection = connection;
-    this.jupiterApiKey = process.env.JUPITER_API_KEY || '';
+    this.raydiumClient = new RaydiumClient(connection);
+    this.orcaClient = new OrcaClient(connection);
+    this.meteoraClient = new MeteoraClient(connection);
+    this.phoenixClient = new PhoenixClient(connection);
   }
 
   /**
-   * Fetch price quote from Jupiter API (aggregates all DEXes)
+   * Initialize all DEX clients
    */
-  private async fetchJupiterQuote(
-    inputMint: string,
-    outputMint: string,
-    amountLamports: string
-  ): Promise<{ price: number; routes: any[] } | null> {
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    logger.info('Initializing DEX clients...');
+    
     try {
-      const url = `https://api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountLamports}&slippageBps=50`;
-      
-      const headers: Record<string, string> = {};
-      if (this.jupiterApiKey) {
-        headers['x-api-key'] = this.jupiterApiKey;
-      }
-      
-      const response = await fetch(url, { headers });
-      if (!response.ok) {
-        if (response.status === 429) {
-          logger.warn('Jupiter API rate limited, waiting...');
-          await this.sleep(1000);
-          return null;
+      // Initialize all DEX clients in parallel
+      const results = await Promise.allSettled([
+        this.raydiumClient.initialize(),
+        this.orcaClient.initialize(),
+        this.meteoraClient.initialize(),
+        this.phoenixClient.initialize(),
+      ]);
+
+      // Log any initialization failures
+      const dexNames = ['Raydium', 'Orca', 'Meteora', 'Phoenix'];
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          logger.warn(`${dexNames[index]} init failed: ${result.reason}`);
         }
-        return null;
-      }
+      });
 
-      const data = await response.json();
-      
-      if (!data.outAmount) return null;
-
-      const inputAmount = parseInt(amountLamports);
-      const outputAmount = parseInt(data.outAmount);
-      const price = outputAmount / inputAmount;
-
-      return {
-        price,
-        routes: data.routePlan || [],
-      };
+      this.initialized = true;
+      logger.info('DEX clients initialization complete');
     } catch (e) {
-      logger.error(`Jupiter quote error: ${e}`);
-      return null;
+      logger.error(`Failed to initialize DEX clients: ${e}`);
     }
   }
 
@@ -131,155 +101,70 @@ export class Scanner {
    */
   async fetchPairPrices(pair: string): Promise<Map<DexName, PriceQuote>> {
     const quotes = new Map<DexName, PriceQuote>();
-    const [base, quote] = pair.split('/');
-    
-    const baseMint = TOKEN_MINTS[base];
-    const quoteMint = TOKEN_MINTS[quote];
-    const baseDecimals = TOKEN_DECIMALS[base] || 9;
-    const quoteDecimals = TOKEN_DECIMALS[quote] || 6;
-    
-    if (!baseMint || !quoteMint) {
-      logger.error(`Unknown tokens in pair: ${pair}`);
-      return quotes;
+
+    // Fetch from each DEX in parallel
+    const [raydiumQuote, orcaQuote, meteoraQuote, phoenixQuote] = await Promise.all([
+      this.raydiumClient.getPrice(pair).catch(() => null),
+      this.orcaClient.getPrice(pair).catch(() => null),
+      this.meteoraClient.getPrice(pair).catch(() => null),
+      this.phoenixClient.getPrice(pair).catch(() => null),
+    ]);
+
+    // Add Raydium quote
+    if (raydiumQuote && raydiumQuote.price > 0) {
+      quotes.set('raydium', {
+        dex: 'raydium',
+        pair,
+        price: raydiumQuote.price,
+        liquidity: raydiumQuote.liquidity,
+        timestamp: Date.now(),
+      });
     }
 
-    // Fetch price from each DEX individually for accuracy
-    for (const dex of DEX_LIST) {
-      try {
-        // Quote: How much USDC do we get for 1 token?
-        const oneToken = Math.pow(10, baseDecimals).toString();
-        const url = `https://api.jup.ag/swap/v1/quote?inputMint=${baseMint}&outputMint=${quoteMint}&amount=${oneToken}&slippageBps=50&onlyDirectRoutes=true&dexes=${dex}`;
-        
-        const headers: Record<string, string> = {};
-        if (this.jupiterApiKey) {
-          headers['x-api-key'] = this.jupiterApiKey;
-        }
-        
-        const response = await fetch(url, { headers });
-        if (!response.ok) {
-          if (response.status === 429) {
-            logger.warn('Jupiter API rate limited, waiting...');
-            await this.sleep(2000);
-          }
-          continue;
-        }
+    // Add Orca quote
+    if (orcaQuote && orcaQuote.price > 0) {
+      quotes.set('orca', {
+        dex: 'orca',
+        pair,
+        price: orcaQuote.price,
+        liquidity: orcaQuote.liquidity,
+        timestamp: Date.now(),
+      });
+    }
 
-        const data = await response.json();
-        
-        if (data.outAmount) {
-          // Price = USDC received / 10^quoteDecimals (normalized to 1 USDC)
-          const usdcReceived = parseInt(data.outAmount);
-          const price = usdcReceived / Math.pow(10, quoteDecimals);
-          
-          // Sanity check - price should be reasonable
-          if (price > 0 && price < 1000000) {
-            quotes.set(dex, {
-              dex,
-              pair,
-              price,
-              liquidity: this.estimateLiquidity(dex, pair),
-              timestamp: Date.now(),
-            });
-          }
-        }
-      } catch (e) {
-        // Skip this DEX
-      }
+    // Add Meteora quote
+    if (meteoraQuote && meteoraQuote.price > 0) {
+      quotes.set('meteora', {
+        dex: 'meteora',
+        pair,
+        price: meteoraQuote.price,
+        liquidity: meteoraQuote.liquidity,
+        timestamp: Date.now(),
+      });
+    }
 
-      // Rate limit: wait 500ms between requests (Jupiter free tier)
-      await this.sleep(500);
+    // Add Phoenix quote
+    if (phoenixQuote && phoenixQuote.price > 0) {
+      quotes.set('phoenix', {
+        dex: 'phoenix',
+        pair,
+        price: phoenixQuote.price,
+        liquidity: phoenixQuote.liquidity,
+        timestamp: Date.now(),
+      });
     }
 
     return quotes;
   }
 
   /**
-   * Fetch quotes from individual DEXes when Jupiter aggregation isn't enough
-   */
-  private async fetchIndividualDexQuotes(
-    pair: string,
-    baseMint: string,
-    quoteMint: string,
-    quotes: Map<DexName, PriceQuote>
-  ): Promise<void> {
-    // For each DEX not yet in quotes, try to get a direct quote
-    for (const dex of DEX_LIST) {
-      if (quotes.has(dex)) continue;
-
-      try {
-        // Use Jupiter with DEX filter
-        const url = `https://api.jup.ag/swap/v1/quote?inputMint=${quoteMint}&outputMint=${baseMint}&amount=1000000000&slippageBps=50&onlyDirectRoutes=true&dexes=${dex}`;
-        
-        const headers: Record<string, string> = {};
-        if (this.jupiterApiKey) {
-          headers['x-api-key'] = this.jupiterApiKey;
-        }
-        
-        const response = await fetch(url, { headers });
-        if (!response.ok) continue;
-
-        const data = await response.json();
-        
-        if (data.outAmount) {
-          const inputAmount = 1000000000; // 1000 USDC
-          const outputAmount = parseInt(data.outAmount);
-          const price = inputAmount / outputAmount;
-
-          quotes.set(dex, {
-            dex,
-            pair,
-            price,
-            liquidity: this.estimateLiquidity(dex, pair),
-            timestamp: Date.now(),
-          });
-        }
-      } catch (e) {
-        // Skip this DEX
-      }
-
-      // Small delay between requests
-      await this.sleep(50);
-    }
-  }
-
-  /**
-   * Normalize DEX name from Jupiter route labels
-   */
-  private normalizeDexName(label: string): string | null {
-    const lower = label.toLowerCase();
-    if (lower.includes('raydium')) return 'raydium';
-    if (lower.includes('orca')) return 'orca';
-    if (lower.includes('meteora')) return 'meteora';
-    if (lower.includes('phoenix')) return 'phoenix';
-    return null;
-  }
-
-  /**
-   * Estimate liquidity for a DEX/pair combination
-   * In production, this would fetch actual pool TVL
-   */
-  private estimateLiquidity(dex: DexName, pair: string): number {
-    // Estimated liquidity in USD (simplified)
-    const baseLiquidity: Record<string, number> = {
-      'SOL/USDC': 50_000_000,
-      'JUP/USDC': 10_000_000,
-      'JTO/USDC': 5_000_000,
-      'BONK/USDC': 3_000_000,
-      'WIF/USDC': 2_000_000,
-    };
-
-    const dexMultiplier: Record<string, number> = {
-      raydium: 1.0,
-      orca: 0.8,
-    };
-
-    return (baseLiquidity[pair] || 1_000_000) * (dexMultiplier[dex] || 0.5);
-  }
-
-  /**
    * Scan all pairs for arbitrage opportunities
    */
   async scanAllPairs(): Promise<ArbitrageOpportunity[]> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
     this.scanCount++;
     const opportunities: ArbitrageOpportunity[] = [];
     
@@ -291,6 +176,11 @@ export class Scanner {
         
         if (quotes.size < 2) {
           continue; // Need at least 2 DEXes to arbitrage
+        }
+
+        // Log prices for debugging
+        for (const [dex, quote] of quotes) {
+          logger.debug(`${pair} ${dex}: $${quote.price.toFixed(6)}`);
         }
 
         // Convert to price and liquidity maps
@@ -313,14 +203,16 @@ export class Scanner {
         if (opportunity && opportunity.calculation.isProfitable) {
           this.opportunitiesFound++;
           opportunities.push(opportunity);
+          
+          logger.opportunity(`${pair} ${(opportunity.spreadPercent * 100).toFixed(2)}% spread`);
+          logger.info(`   Buy: ${opportunity.buyDex} ($${opportunity.buyPrice.toFixed(4)})`);
+          logger.info(`   Sell: ${opportunity.sellDex} ($${opportunity.sellPrice.toFixed(4)})`);
+          logger.info(`   Expected profit: $${opportunity.calculation.netProfit.toFixed(2)}`);
         }
 
       } catch (e) {
         logger.error(`Error scanning ${pair}: ${e}`);
       }
-
-      // Small delay between pairs
-      await this.sleep(100);
     }
 
     return opportunities;
@@ -334,9 +226,5 @@ export class Scanner {
       scanCount: this.scanCount,
       opportunitiesFound: this.opportunitiesFound,
     };
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
