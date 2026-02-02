@@ -18,7 +18,7 @@ import {
   PROGRAM_ID as KAMINO_PROGRAM_ID,
   getFlashLoanInstructions,
 } from '@kamino-finance/klend-sdk';
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import Decimal from 'decimal.js';
 
 // Kamino Main Market address
@@ -83,7 +83,7 @@ export class KaminoFlashLoanClient {
       await this.market.loadReserves();
       
       this.initialized = true;
-      console.log('[Kamino] Market initialized with', this.market.reserves.length, 'reserves');
+      console.log('[Kamino] Market initialized with', this.market.reserves.size, 'reserves');
     } catch (e) {
       console.error('[Kamino] Failed to initialize:', e);
       throw e;
@@ -136,7 +136,7 @@ export class KaminoFlashLoanClient {
       }
 
       // Get borrower's ATA for this token
-      const destinationAta = await getAssociatedTokenAddress(
+      const destinationAta = getAssociatedTokenAddressSync(
         tokenMint,
         borrowerKeypair.publicKey
       );
@@ -145,22 +145,22 @@ export class KaminoFlashLoanClient {
       const lendingMarketAuthority = await this.market!.getLendingMarketAuthority();
 
       // Build flash loan instructions using SDK
-      const { flashBorrowIx, flashRepayIx } = getFlashLoanInstructions({
-        borrowIxIndex: 0, // Flash borrow will be first instruction
-        userTransferAuthority: borrowerKeypair.publicKey,
+      const { flashBorrowIxn, flashRepayIxn } = getFlashLoanInstructions({
+        borrowIxnIndex: 0, // Flash borrow will be first instruction
+        walletPublicKey: borrowerKeypair.publicKey,
         lendingMarketAuthority,
         lendingMarketAddress: KAMINO_MAIN_MARKET,
         reserve,
         amountLamports: new Decimal(amountLamports.toString()),
         destinationAta,
-        referrerAccount: null,
-        referrerTokenState: null,
+        referrerAccount: PublicKey.default,
+        referrerTokenState: PublicKey.default,
         programId: KAMINO_PROGRAM_ID,
       });
 
       return {
-        flashBorrowIx,
-        flashRepayIx,
+        flashBorrowIx: flashBorrowIxn,
+        flashRepayIx: flashRepayIxn,
         destinationAta,
       };
 
@@ -262,7 +262,7 @@ export class KaminoFlashLoanClient {
       if (!reserve) return 0;
 
       // Get available liquidity from reserve stats
-      const availableLiquidity = reserve.stats?.availableLiquidity || 0;
+      const availableLiquidity = (reserve as any).stats?.availableLiquidity || (reserve as any).liquidity?.availableAmount || 0;
       return Number(availableLiquidity);
     } catch (e) {
       console.error(`[Kamino] Error getting liquidity for ${tokenSymbol}:`, e);

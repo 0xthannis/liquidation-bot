@@ -3,7 +3,7 @@ import { Connection, Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 import express from 'express';
 import cors from 'cors';
-import { WebSocketServer, WebSocket } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import http from 'http';
 import { logger } from './utils/logger.js';
 import { Scanner, TRADING_PAIRS, DEX_LIST } from './scanner.js';

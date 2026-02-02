@@ -14,7 +14,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { logger } from './utils/logger.js';
 import { ArbitrageOpportunity, calculateJitoTip, calculateNetProfitAfterTip } from './profit-calculator.js';
 import { KaminoFlashLoanClient } from './kamino-flash-loan.js';
