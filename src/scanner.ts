@@ -28,6 +28,16 @@ export const TOKEN_MINTS: Record<string, string> = {
   'WIF': 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
 };
 
+// Token decimals for price calculation
+export const TOKEN_DECIMALS: Record<string, number> = {
+  'SOL': 9,
+  'USDC': 6,
+  'JUP': 6,
+  'JTO': 9,
+  'BONK': 5,
+  'WIF': 6,
+};
+
 /**
  * DEX identifiers
  */
@@ -116,6 +126,7 @@ export class Scanner {
 
   /**
    * Fetch prices for a trading pair from all DEXes
+   * Returns price in USDC per 1 token
    */
   async fetchPairPrices(pair: string): Promise<Map<DexName, PriceQuote>> {
     const quotes = new Map<DexName, PriceQuote>();
@@ -123,50 +134,59 @@ export class Scanner {
     
     const baseMint = TOKEN_MINTS[base];
     const quoteMint = TOKEN_MINTS[quote];
+    const baseDecimals = TOKEN_DECIMALS[base] || 9;
+    const quoteDecimals = TOKEN_DECIMALS[quote] || 6;
     
     if (!baseMint || !quoteMint) {
       logger.error(`Unknown tokens in pair: ${pair}`);
       return quotes;
     }
 
-    // Use $1000 USDC as quote amount for price discovery
-    const quoteAmount = '1000000000'; // 1000 USDC (6 decimals)
+    // Fetch price from each DEX individually for accuracy
+    for (const dex of DEX_LIST) {
+      try {
+        // Quote: How much USDC do we get for 1 token?
+        const oneToken = Math.pow(10, baseDecimals).toString();
+        const url = `https://api.jup.ag/swap/v1/quote?inputMint=${baseMint}&outputMint=${quoteMint}&amount=${oneToken}&slippageBps=50&onlyDirectRoutes=true&dexes=${dex}`;
+        
+        const headers: Record<string, string> = {};
+        if (this.jupiterApiKey) {
+          headers['x-api-key'] = this.jupiterApiKey;
+        }
+        
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+          if (response.status === 429) {
+            logger.warn('Jupiter API rate limited, waiting...');
+            await this.sleep(2000);
+          }
+          continue;
+        }
 
-    try {
-      // Fetch quote from Jupiter (it routes through best DEX)
-      const jupiterQuote = await this.fetchJupiterQuote(quoteMint, baseMint, quoteAmount);
-      
-      if (jupiterQuote && jupiterQuote.routes.length > 0) {
-        // Extract DEX-specific prices from routes
-        for (const route of jupiterQuote.routes) {
-          const dexName = this.normalizeDexName(route.swapInfo?.label || '');
-          if (dexName && DEX_LIST.includes(dexName as DexName)) {
-            // Calculate price per token
-            const inputAmount = parseInt(route.swapInfo?.inAmount || '0');
-            const outputAmount = parseInt(route.swapInfo?.outAmount || '0');
-            
-            if (inputAmount > 0 && outputAmount > 0) {
-              const price = inputAmount / outputAmount; // USDC per token
-              
-              quotes.set(dexName as DexName, {
-                dex: dexName as DexName,
-                pair,
-                price,
-                liquidity: this.estimateLiquidity(dexName as DexName, pair),
-                timestamp: Date.now(),
-              });
-            }
+        const data = await response.json();
+        
+        if (data.outAmount) {
+          // Price = USDC received / 10^quoteDecimals (normalized to 1 USDC)
+          const usdcReceived = parseInt(data.outAmount);
+          const price = usdcReceived / Math.pow(10, quoteDecimals);
+          
+          // Sanity check - price should be reasonable
+          if (price > 0 && price < 1000000) {
+            quotes.set(dex, {
+              dex,
+              pair,
+              price,
+              liquidity: this.estimateLiquidity(dex, pair),
+              timestamp: Date.now(),
+            });
           }
         }
+      } catch (e) {
+        // Skip this DEX
       }
 
-      // If we didn't get enough DEX prices, fetch individual quotes
-      if (quotes.size < 2) {
-        await this.fetchIndividualDexQuotes(pair, baseMint, quoteMint, quotes);
-      }
-
-    } catch (e) {
-      logger.error(`Error fetching prices for ${pair}: ${e}`);
+      // Rate limit: wait between requests
+      await this.sleep(200);
     }
 
     return quotes;
