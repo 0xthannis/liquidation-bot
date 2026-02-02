@@ -59,8 +59,10 @@ export class RaydiumClient {
     }
 
     try {
-      // Use 1 unit of base token to get price quote
-      const inputAmount = Math.pow(10, baseInfo.decimals); // 1 token in base units
+      // Use larger amount for tokens with very low prices to get accurate quotes
+      // BONK and similar meme coins need larger amounts to avoid minimum output issues
+      const tokenMultiplier = baseInfo.decimals <= 6 ? 1000 : 1; // Use 1000 tokens for low decimal tokens
+      const inputAmount = Math.pow(10, baseInfo.decimals) * tokenMultiplier;
       
       const url = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${baseInfo.mint}&outputMint=${quoteInfo.mint}&amount=${inputAmount}&slippageBps=50&txVersion=V0`;
       
@@ -78,11 +80,12 @@ export class RaydiumClient {
 
       // Calculate price from output amount
       // outputAmount is in quote token base units
+      // Divide by tokenMultiplier to get price per 1 token
       const outputAmount = Number(data.data.outputAmount);
-      const price = outputAmount / Math.pow(10, quoteInfo.decimals);
+      const price = (outputAmount / Math.pow(10, quoteInfo.decimals)) / tokenMultiplier;
 
       // Debug: show raw values for verification
-      console.log(`[Raydium] ${pair}: inputAmount=${inputAmount}, outputAmount=${outputAmount}, price=${price}`);
+      console.log(`[Raydium] ${pair}: inputTokens=${tokenMultiplier}, outputAmount=${outputAmount}, price=${price}`);
 
       return {
         pair,
