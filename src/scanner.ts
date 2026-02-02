@@ -63,9 +63,11 @@ export class Scanner {
   private readonly cacheDurationMs = 1000; // 1 second cache
   private scanCount = 0;
   private opportunitiesFound = 0;
+  private jupiterApiKey: string;
 
   constructor(connection: ThrottledConnection) {
     this.connection = connection;
+    this.jupiterApiKey = process.env.JUPITER_API_KEY || '';
   }
 
   /**
@@ -77,9 +79,14 @@ export class Scanner {
     amountLamports: string
   ): Promise<{ price: number; routes: any[] } | null> {
     try {
-      const url = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountLamports}&slippageBps=50`;
+      const url = `https://api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountLamports}&slippageBps=50`;
       
-      const response = await fetch(url);
+      const headers: Record<string, string> = {};
+      if (this.jupiterApiKey) {
+        headers['x-api-key'] = this.jupiterApiKey;
+      }
+      
+      const response = await fetch(url, { headers });
       if (!response.ok) {
         if (response.status === 429) {
           logger.warn('Jupiter API rate limited, waiting...');
@@ -180,9 +187,14 @@ export class Scanner {
 
       try {
         // Use Jupiter with DEX filter
-        const url = `https://quote-api.jup.ag/v6/quote?inputMint=${quoteMint}&outputMint=${baseMint}&amount=1000000000&slippageBps=50&onlyDirectRoutes=true&dexes=${dex}`;
+        const url = `https://api.jup.ag/swap/v1/quote?inputMint=${quoteMint}&outputMint=${baseMint}&amount=1000000000&slippageBps=50&onlyDirectRoutes=true&dexes=${dex}`;
         
-        const response = await fetch(url);
+        const headers: Record<string, string> = {};
+        if (this.jupiterApiKey) {
+          headers['x-api-key'] = this.jupiterApiKey;
+        }
+        
+        const response = await fetch(url, { headers });
         if (!response.ok) continue;
 
         const data = await response.json();
