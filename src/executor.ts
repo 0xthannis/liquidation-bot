@@ -14,8 +14,11 @@ import {
 } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { logger } from './utils/logger.js';
-import { ArbitrageOpportunity } from './profit-calculator.js';
+import { ArbitrageOpportunity, calculateJitoTip, calculateNetProfitAfterTip } from './profit-calculator.js';
 import { KaminoFlashLoanClient } from './kamino-flash-loan.js';
+
+// Jito tip account (mainnet)
+const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
 
 // Token mint addresses
 const TOKEN_MINTS: Record<string, PublicKey> = {
@@ -93,6 +96,16 @@ export class Executor {
     logger.info('Executor initialized');
   }
 
+  // Cache SOL price for Jito tip calculation
+  private solPriceUsd: number = 100; // Default, updated from scanner
+
+  /**
+   * Update SOL price for tip calculations
+   */
+  setSolPrice(price: number): void {
+    this.solPriceUsd = price;
+  }
+
   /**
    * Execute an arbitrage opportunity
    */
@@ -100,11 +113,27 @@ export class Executor {
     const startTime = Date.now();
     this.stats.tradesExecuted++;
 
+    // Calculate dynamic Jito tip (15% of expected profit)
+    const jitoTipSol = calculateJitoTip(opportunity.calculation.netProfit, this.solPriceUsd);
+    const jitoTipUsd = jitoTipSol * this.solPriceUsd;
+    const finalProfit = calculateNetProfitAfterTip(opportunity.calculation.netProfit, jitoTipSol, this.solPriceUsd);
+
+    // Skip if not profitable after tip
+    if (finalProfit <= 0) {
+      logger.warn(`[Skip] ${opportunity.pair}: Not profitable after Jito tip ($${jitoTipUsd.toFixed(2)})`);
+      return {
+        success: false,
+        error: 'Not profitable after Jito tip',
+        executionTimeMs: Date.now() - startTime,
+      };
+    }
+
     logger.opportunity(`EXECUTING: ${opportunity.pair}`);
     logger.info(`   Buy: ${opportunity.buyDex} @ $${opportunity.buyPrice.toFixed(4)}`);
     logger.info(`   Sell: ${opportunity.sellDex} @ $${opportunity.sellPrice.toFixed(4)}`);
     logger.info(`   Flash amount: $${opportunity.flashAmount.toLocaleString()}`);
-    logger.info(`   Expected profit: $${opportunity.calculation.netProfit.toFixed(2)}`);
+    logger.info(`   Jito tip: ${jitoTipSol.toFixed(6)} SOL ($${jitoTipUsd.toFixed(2)})`);
+    logger.info(`   Final profit: $${finalProfit.toFixed(2)}`);
 
     // In dry run mode, just log and return
     if (this.dryRun) {

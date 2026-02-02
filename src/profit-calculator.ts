@@ -16,6 +16,46 @@ export const DEX_FEES: Record<string, number> = {
 export const FLASH_LOAN_FEE = 0.00001; // 0.001%
 
 /**
+ * Jito tip configuration
+ * Dynamic tip = percentage of expected profit to ensure priority while staying profitable
+ */
+export const JITO_TIP_CONFIG = {
+  MIN_TIP_SOL: 0.0001,      // Minimum tip: 0.0001 SOL (~$0.01)
+  MAX_TIP_SOL: 0.1,         // Maximum tip: 0.1 SOL (~$10)
+  PROFIT_SHARE: 0.15,       // Use 15% of expected profit as tip
+};
+
+/**
+ * Calculate dynamic Jito tip based on expected profit
+ * @param expectedProfitUsd Expected profit in USD
+ * @param solPriceUsd Current SOL price in USD
+ * @returns Tip amount in SOL
+ */
+export function calculateJitoTip(expectedProfitUsd: number, solPriceUsd: number): number {
+  // Calculate tip as percentage of profit
+  const tipUsd = expectedProfitUsd * JITO_TIP_CONFIG.PROFIT_SHARE;
+  const tipSol = tipUsd / solPriceUsd;
+  
+  // Apply min/max bounds
+  return Math.min(
+    Math.max(tipSol, JITO_TIP_CONFIG.MIN_TIP_SOL),
+    JITO_TIP_CONFIG.MAX_TIP_SOL
+  );
+}
+
+/**
+ * Calculate final profit after Jito tip
+ */
+export function calculateNetProfitAfterTip(
+  grossNetProfit: number,
+  jitoTipSol: number,
+  solPriceUsd: number
+): number {
+  const tipCostUsd = jitoTipSol * solPriceUsd;
+  return grossNetProfit - tipCostUsd;
+}
+
+/**
  * Minimum spread thresholds for profitability
  */
 export const MIN_SPREAD_THRESHOLDS: Record<string, number> = {
