@@ -4,9 +4,10 @@
  * Documentation: https://docs.raydium.io/raydium/traders/trade-api
  */
 
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey, VersionedTransaction, Transaction } from '@solana/web3.js';
 
 const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
+const RAYDIUM_PRIORITY_FEE_URL = 'https://api-v3.raydium.io/main/auto-fee';
 
 // Token mint addresses and decimals
 const TOKEN_INFO: Record<string, { mint: string; decimals: number }> = {
@@ -111,5 +112,90 @@ export class RaydiumClient {
       await new Promise(r => setTimeout(r, 100));
     }
     return results;
+  }
+
+  /**
+   * Build swap transaction using Raydium Trade API
+   * @param inputMint Input token mint address
+   * @param outputMint Output token mint address  
+   * @param amountIn Amount in base units (lamports)
+   * @param walletPubkey Wallet public key
+   * @param slippageBps Slippage in basis points (default 50 = 0.5%)
+   * @returns Serialized transaction buffer or null
+   */
+  async buildSwapTransaction(
+    inputMint: string,
+    outputMint: string,
+    amountIn: number,
+    walletPubkey: PublicKey,
+    slippageBps: number = 50
+  ): Promise<Buffer | null> {
+    try {
+      // Step 1: Get swap quote
+      const quoteUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountIn}&slippageBps=${slippageBps}&txVersion=V0`;
+      
+      const quoteResponse = await fetch(quoteUrl);
+      if (!quoteResponse.ok) {
+        console.error(`[Raydium] Quote API error: ${quoteResponse.status}`);
+        return null;
+      }
+      
+      const quoteData = await quoteResponse.json();
+      if (!quoteData.success || !quoteData.data) {
+        console.error('[Raydium] Quote API returned no data');
+        return null;
+      }
+
+      // Step 2: Get priority fee
+      let priorityFee = 100000; // Default 0.0001 SOL
+      try {
+        const feeResponse = await fetch(RAYDIUM_PRIORITY_FEE_URL);
+        if (feeResponse.ok) {
+          const feeData = await feeResponse.json();
+          priorityFee = feeData.data?.default?.h || 100000;
+        }
+      } catch (e) {
+        // Use default fee
+      }
+
+      // Step 3: Build transaction
+      const txResponse = await fetch(`${RAYDIUM_API_URL}/transaction/swap-base-in`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          computeUnitPriceMicroLamports: String(priorityFee),
+          swapResponse: quoteData,
+          txVersion: 'V0',
+          wallet: walletPubkey.toBase58(),
+          wrapSol: inputMint === TOKEN_INFO['SOL'].mint,
+          unwrapSol: outputMint === TOKEN_INFO['SOL'].mint,
+        }),
+      });
+
+      if (!txResponse.ok) {
+        console.error(`[Raydium] Transaction API error: ${txResponse.status}`);
+        return null;
+      }
+
+      const txData = await txResponse.json();
+      if (!txData.success || !txData.data || txData.data.length === 0) {
+        console.error('[Raydium] Transaction API returned no data');
+        return null;
+      }
+
+      // Return first transaction (usually only one for simple swaps)
+      return Buffer.from(txData.data[0].transaction, 'base64');
+
+    } catch (e) {
+      console.error('[Raydium] Error building swap transaction:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Get token info by symbol
+   */
+  getTokenInfo(symbol: string): { mint: string; decimals: number } | null {
+    return TOKEN_INFO[symbol] || null;
   }
 }

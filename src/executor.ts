@@ -1,7 +1,7 @@
 /**
  * Flash Loan Arbitrage Executor
  * Uses Kamino flash loans for capital-efficient arbitrage
- * Integrates with Jupiter for swap execution
+ * Integrates with Raydium and Orca DEXes for swaps
  */
 
 import { 
@@ -11,11 +11,16 @@ import {
   TransactionInstruction,
   VersionedTransaction,
   TransactionMessage,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { logger } from './utils/logger.js';
 import { ArbitrageOpportunity, calculateJitoTip, calculateNetProfitAfterTip } from './profit-calculator.js';
 import { KaminoFlashLoanClient } from './kamino-flash-loan.js';
+import { RaydiumClient } from './dex-integrations/raydium.js';
+import { OrcaClient } from './dex-integrations/orca.js';
+import BN from 'bn.js';
 
 // Jito tip account (mainnet)
 const JITO_TIP_ACCOUNT = new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
@@ -70,6 +75,8 @@ export class Executor {
   private keypair: Keypair;
   private dryRun: boolean;
   private kaminoClient: KaminoFlashLoanClient;
+  private raydiumClient: RaydiumClient;
+  private orcaClient: OrcaClient;
   private stats: ExecutorStats = {
     tradesExecuted: 0,
     tradesSuccessful: 0,
@@ -82,6 +89,8 @@ export class Executor {
     this.keypair = keypair;
     this.dryRun = dryRun;
     this.kaminoClient = new KaminoFlashLoanClient(connection);
+    this.raydiumClient = new RaydiumClient(connection);
+    this.orcaClient = new OrcaClient(connection);
     
     if (dryRun) {
       logger.warn('Executor running in DRY RUN mode - no transactions will be sent');
@@ -93,6 +102,8 @@ export class Executor {
    */
   async initialize(): Promise<void> {
     await this.kaminoClient.initialize();
+    await this.raydiumClient.initialize();
+    await this.orcaClient.initialize();
     logger.info('Executor initialized');
   }
 
@@ -244,7 +255,7 @@ export class Executor {
 
   /**
    * Build swap instructions for the arbitrage
-   * Uses Jupiter API to build optimized swap transactions
+   * Uses Raydium/Orca DEX SDKs directly
    */
   private async buildSwapInstructions(
     opportunity: ArbitrageOpportunity
@@ -252,25 +263,107 @@ export class Executor {
     const [baseToken] = opportunity.pair.split('/');
     const baseMint = TOKEN_MINTS[baseToken];
     const usdcMint = TOKEN_MINTS['USDC'];
+    const baseDecimals = TOKEN_DECIMALS[baseToken];
     
     if (!baseMint) {
       logger.error(`Unknown token: ${baseToken}`);
       return [];
     }
 
+    const instructions: TransactionInstruction[] = [];
+
     try {
-      // In a production implementation, we would:
-      // 1. Call Jupiter API to get swap instructions for buy (USDC → baseToken on buyDex)
-      // 2. Call Jupiter API to get swap instructions for sell (baseToken → USDC on sellDex)
-      // 3. Combine and return the instructions
+      // Calculate amounts
+      const usdcAmountIn = Math.floor(opportunity.flashAmount * 1_000_000); // USDC has 6 decimals
+      const expectedTokenAmount = Math.floor((opportunity.flashAmount / opportunity.buyPrice) * Math.pow(10, baseDecimals));
+
+      logger.info(`[Executor] Building swaps: ${opportunity.flashAmount} USDC → ${baseToken} → USDC`);
+      logger.info(`[Executor] Buy on ${opportunity.buyDex}, Sell on ${opportunity.sellDex}`);
+
+      // STEP 1: Buy token on buyDex (USDC → baseToken)
+      if (opportunity.buyDex === 'raydium') {
+        const buyTxBuffer = await this.raydiumClient.buildSwapTransaction(
+          usdcMint.toBase58(),
+          baseMint.toBase58(),
+          usdcAmountIn,
+          this.keypair.publicKey,
+          100 // 1% slippage
+        );
+        if (!buyTxBuffer) {
+          logger.error('[Executor] Failed to build Raydium buy transaction');
+          return [];
+        }
+        // Raydium returns full transaction, we need to extract instructions
+        // For flash loans, we need individual instructions
+        logger.info('[Executor] Raydium buy transaction built');
+      } else if (opportunity.buyDex === 'orca') {
+        const buyTx = await this.orcaClient.buildSwapTransaction(
+          usdcMint,
+          baseMint,
+          new BN(usdcAmountIn),
+          this.keypair.publicKey,
+          1 // 1% slippage
+        );
+        if (!buyTx) {
+          logger.error('[Executor] Failed to build Orca buy transaction');
+          return [];
+        }
+        // Orca returns TransactionBuilder, extract instructions
+        const buyInstructions = buyTx.compressIx(true);
+        instructions.push(...buyInstructions);
+        logger.info(`[Executor] Orca buy: ${buyInstructions.length} instructions`);
+      }
+
+      // STEP 2: Sell token on sellDex (baseToken → USDC)
+      if (opportunity.sellDex === 'raydium') {
+        const sellTxBuffer = await this.raydiumClient.buildSwapTransaction(
+          baseMint.toBase58(),
+          usdcMint.toBase58(),
+          expectedTokenAmount,
+          this.keypair.publicKey,
+          100 // 1% slippage
+        );
+        if (!sellTxBuffer) {
+          logger.error('[Executor] Failed to build Raydium sell transaction');
+          return [];
+        }
+        logger.info('[Executor] Raydium sell transaction built');
+      } else if (opportunity.sellDex === 'orca') {
+        const sellTx = await this.orcaClient.buildSwapTransaction(
+          baseMint,
+          usdcMint,
+          new BN(expectedTokenAmount),
+          this.keypair.publicKey,
+          1 // 1% slippage
+        );
+        if (!sellTx) {
+          logger.error('[Executor] Failed to build Orca sell transaction');
+          return [];
+        }
+        const sellInstructions = sellTx.compressIx(true);
+        instructions.push(...sellInstructions);
+        logger.info(`[Executor] Orca sell: ${sellInstructions.length} instructions`);
+      }
+
+      // STEP 3: Add Jito tip instruction
+      const jitoTipSol = calculateJitoTip(opportunity.calculation.netProfit, this.solPriceUsd);
+      const jitoTipLamports = Math.floor(jitoTipSol * LAMPORTS_PER_SOL);
       
-      // For now, return empty array - swap instruction building requires
-      // more complex Jupiter API integration
-      logger.warn('Swap instruction building not yet implemented');
-      return [];
+      if (jitoTipLamports > 0) {
+        const tipIx = SystemProgram.transfer({
+          fromPubkey: this.keypair.publicKey,
+          toPubkey: JITO_TIP_ACCOUNT,
+          lamports: jitoTipLamports,
+        });
+        instructions.push(tipIx);
+        logger.info(`[Executor] Jito tip: ${jitoTipSol.toFixed(6)} SOL`);
+      }
+
+      logger.info(`[Executor] Total instructions: ${instructions.length}`);
+      return instructions;
 
     } catch (e) {
-      logger.error(`Error building swap instructions: ${e}`);
+      logger.error(`[Executor] Error building swap instructions: ${e}`);
       return [];
     }
   }

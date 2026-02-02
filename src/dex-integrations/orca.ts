@@ -202,4 +202,86 @@ export class OrcaClient {
 
     return results;
   }
+
+  /**
+   * Build swap transaction for Orca Whirlpool
+   * @param inputMint Input token mint
+   * @param outputMint Output token mint
+   * @param amountIn Amount in base units
+   * @param walletPubkey Wallet public key
+   * @param slippagePct Slippage percentage (default 1%)
+   * @returns Transaction instructions or null
+   */
+  async buildSwapTransaction(
+    inputMint: PublicKey,
+    outputMint: PublicKey,
+    amountIn: BN,
+    walletPubkey: PublicKey,
+    slippagePct: number = 1
+  ): Promise<any | null> {
+    if (!this.client || !this.ctx) {
+      await this.initialize();
+    }
+
+    try {
+      // Find the whirlpool for this pair
+      const inputSymbol = Object.keys(TOKEN_INFO).find(k => TOKEN_INFO[k].mint.equals(inputMint));
+      const outputSymbol = Object.keys(TOKEN_INFO).find(k => TOKEN_INFO[k].mint.equals(outputMint));
+      
+      if (!inputSymbol || !outputSymbol) {
+        console.error('[Orca] Unknown token mints');
+        return null;
+      }
+
+      const pair = `${inputSymbol}/${outputSymbol}`;
+      const reversePair = `${outputSymbol}/${inputSymbol}`;
+      
+      let poolAddress = await this.findWhirlpool(pair);
+      if (!poolAddress) {
+        poolAddress = await this.findWhirlpool(reversePair);
+      }
+      
+      if (!poolAddress) {
+        console.error(`[Orca] No whirlpool found for ${inputSymbol}/${outputSymbol}`);
+        return null;
+      }
+
+      const whirlpool = await this.client.getPool(poolAddress);
+      const slippage = Percentage.fromFraction(slippagePct, 100);
+
+      // Get swap quote
+      const swapQuote = await swapQuoteByInputToken(
+        whirlpool,
+        inputMint,
+        amountIn,
+        slippage,
+        ORCA_WHIRLPOOL_PROGRAM_ID,
+        this.ctx!.fetcher,
+        IGNORE_CACHE
+      );
+
+      // Build swap transaction
+      const swapTx = await whirlpool.swap(swapQuote, walletPubkey);
+      
+      return swapTx;
+
+    } catch (e) {
+      console.error('[Orca] Error building swap transaction:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Get token info by symbol
+   */
+  getTokenInfo(symbol: string): { mint: PublicKey; decimals: number } | null {
+    return TOKEN_INFO[symbol] || null;
+  }
+
+  /**
+   * Get context for external use
+   */
+  getContext(): WhirlpoolContext | null {
+    return this.ctx;
+  }
 }
