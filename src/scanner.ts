@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import fetch from 'node-fetch';
 import { ThrottledConnection } from './utils/throttled-connection.js';
 import { logger } from './utils/logger.js';
 import { findBestOpportunity, ArbitrageOpportunity } from './profit-calculator.js';
