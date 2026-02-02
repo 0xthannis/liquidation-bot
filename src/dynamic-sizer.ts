@@ -112,15 +112,45 @@ export function calculateOptimalAmount(
 }
 
 /**
- * Iteratively find the best amount by testing different sizes
+ * Calculate profit for a given amount considering slippage
+ * Slippage model: slippage % = (amount / liquidity)^2 * 200
+ */
+export function estimateNetProfit(
+  amount: number,
+  spreadPercent: number,
+  minPoolLiquidity: number,
+  totalFeesPercent: number = 0.008 // 0.8% default (flash + dex fees)
+): number {
+  // Gross profit from spread
+  const grossProfit = amount * spreadPercent;
+  
+  // Fixed fees (flash loan + DEX fees)
+  const fees = amount * totalFeesPercent;
+  
+  // Slippage increases quadratically with size relative to liquidity
+  // Formula: slippage% = (amount/liquidity)^2 * 2
+  const sizeRatio = amount / minPoolLiquidity;
+  const slippagePercent = sizeRatio * sizeRatio * 2;
+  const slippageCost = amount * slippagePercent;
+  
+  return grossProfit - fees - slippageCost;
+}
+
+/**
+ * Find the optimal flash loan amount that maximizes profit
+ * Tests multiple amounts and picks the one with highest net profit
  */
 export function findOptimalAmountIterative(
   pair: string,
   minPoolLiquidity: number,
   spreadPercent: number,
-  calculateProfitFn: (amount: number) => number
-): number {
+  totalFeesPercent: number = 0.008
+): { amount: number; expectedProfit: number; slippagePercent: number } {
+  // Test amounts from $1K to 10% of pool liquidity
+  const maxAmount = minPoolLiquidity * MAX_LIQUIDITY_RATIO;
   const testAmounts = [
+    1_000,
+    5_000,
     10_000,
     25_000,
     50_000,
@@ -130,20 +160,33 @@ export function findOptimalAmountIterative(
     1_000_000,
     2_500_000,
     5_000_000,
-  ].filter(a => a <= minPoolLiquidity * MAX_LIQUIDITY_RATIO);
+    10_000_000,
+  ].filter(a => a <= maxAmount);
   
-  let bestAmount = MIN_AMOUNT;
-  let bestProfit = 0;
+  let bestAmount = testAmounts[0] || 1000;
+  let bestProfit = -Infinity;
+  let bestSlippage = 0;
   
   for (const amount of testAmounts) {
-    const profit = calculateProfitFn(amount);
+    const profit = estimateNetProfit(amount, spreadPercent, minPoolLiquidity, totalFeesPercent);
+    
     if (profit > bestProfit) {
       bestProfit = profit;
       bestAmount = amount;
+      bestSlippage = Math.pow(amount / minPoolLiquidity, 2) * 2;
     }
   }
   
-  return bestAmount;
+  // If no profitable amount found, return minimum
+  if (bestProfit <= 0) {
+    return { amount: 0, expectedProfit: 0, slippagePercent: 0 };
+  }
+  
+  return { 
+    amount: bestAmount, 
+    expectedProfit: bestProfit,
+    slippagePercent: bestSlippage,
+  };
 }
 
 /**
