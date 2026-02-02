@@ -18,7 +18,7 @@ import {
   PROGRAM_ID as KAMINO_PROGRAM_ID,
   getFlashLoanInstructions,
 } from '@kamino-finance/klend-sdk';
-import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import Decimal from 'decimal.js';
 
 // Kamino Main Market address
@@ -136,7 +136,7 @@ export class KaminoFlashLoanClient {
       }
 
       // Get borrower's ATA for this token
-      const destinationAta = getAssociatedTokenAddressSync(
+      const destinationAta = await getAssociatedTokenAddress(
         tokenMint,
         borrowerKeypair.publicKey
       );
