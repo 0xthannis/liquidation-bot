@@ -72,6 +72,7 @@ export class RaydiumClient {
       const data = await response.json();
       
       if (!data.success || !data.data) {
+        console.error(`[Raydium] ${pair}: API returned no data`);
         return null;
       }
 
@@ -80,7 +81,8 @@ export class RaydiumClient {
       const outputAmount = Number(data.data.outputAmount);
       const price = outputAmount / Math.pow(10, quoteInfo.decimals);
 
-      console.log(`[Raydium] ${pair}: price=${price}`);
+      // Debug: show raw values for verification
+      console.log(`[Raydium] ${pair}: inputAmount=${inputAmount}, outputAmount=${outputAmount}, price=${price}`);
 
       return {
         pair,
