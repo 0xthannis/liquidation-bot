@@ -18,7 +18,6 @@ export const TRADING_PAIRS = [
   'SOL/USDC',
   'JUP/USDC',
   'JTO/USDC',
-  'BONK/USDC',
   'WIF/USDC',
 ];
 

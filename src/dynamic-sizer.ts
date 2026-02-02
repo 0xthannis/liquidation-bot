@@ -10,15 +10,14 @@ export const DEFAULT_AMOUNTS: Record<string, number> = {
   'SOL/USDC': 500_000,   // Very liquid
   'JUP/USDC': 100_000,
   'JTO/USDC': 100_000,
-  'BONK/USDC': 50_000,   // Less liquid
   'WIF/USDC': 50_000,
 };
 
 /**
- * Absolute limits
+ * Absolute limits - no hard limits, adapts to available liquidity
  */
-export const MIN_AMOUNT = 10_000;      // $10k minimum
-export const MAX_AMOUNT = 5_000_000;   // $5M maximum
+export const MIN_AMOUNT = 100;           // $100 minimum (just for safety)
+export const MAX_AMOUNT = 100_000_000;   // $100M maximum (effectively no limit)
 
 /**
  * Liquidity ratio - max % of pool we can use
