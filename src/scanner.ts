@@ -1,7 +1,7 @@
 /**
  * Multi-DEX Price Scanner
  * Uses native DEX SDKs for accurate price fetching
- * Supports: Raydium, Orca, Phoenix
+ * Supports: Raydium, Orca
  */
 
 import { Connection } from '@solana/web3.js';
@@ -10,7 +10,6 @@ import { findBestOpportunity, ArbitrageOpportunity } from './profit-calculator.j
 import { calculateOptimalAmount } from './dynamic-sizer.js';
 import { RaydiumClient } from './dex-integrations/raydium.js';
 import { OrcaClient } from './dex-integrations/orca.js';
-import { PhoenixClient } from './dex-integrations/phoenix.js';
 
 /**
  * Trading pairs to monitor
@@ -24,9 +23,9 @@ export const TRADING_PAIRS = [
 ];
 
 /**
- * DEX identifiers - 3 DEXes with direct SDK access
+ * DEX identifiers - 2 DEXes with direct SDK access
  */
-export const DEX_LIST = ['raydium', 'orca', 'phoenix'] as const;
+export const DEX_LIST = ['raydium', 'orca'] as const;
 export type DexName = typeof DEX_LIST[number];
 
 /**
@@ -48,7 +47,6 @@ export class Scanner {
   private connection: Connection;
   private raydiumClient: RaydiumClient;
   private orcaClient: OrcaClient;
-  private phoenixClient: PhoenixClient;
   private scanCount = 0;
   private opportunitiesFound = 0;
   private initialized = false;
@@ -57,7 +55,6 @@ export class Scanner {
     this.connection = connection;
     this.raydiumClient = new RaydiumClient(connection);
     this.orcaClient = new OrcaClient(connection);
-    this.phoenixClient = new PhoenixClient(connection);
   }
 
   /**
@@ -73,11 +70,10 @@ export class Scanner {
       const results = await Promise.allSettled([
         this.raydiumClient.initialize(),
         this.orcaClient.initialize(),
-        this.phoenixClient.initialize(),
       ]);
 
       // Log any initialization failures
-      const dexNames = ['Raydium', 'Orca', 'Phoenix'];
+      const dexNames = ['Raydium', 'Orca'];
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
           logger.warn(`${dexNames[index]} init failed: ${result.reason}`);
@@ -99,10 +95,9 @@ export class Scanner {
     const quotes = new Map<DexName, PriceQuote>();
 
     // Fetch from each DEX in parallel
-    const [raydiumQuote, orcaQuote, phoenixQuote] = await Promise.all([
+    const [raydiumQuote, orcaQuote] = await Promise.all([
       this.raydiumClient.getPrice(pair).catch(() => null),
       this.orcaClient.getPrice(pair).catch(() => null),
-      this.phoenixClient.getPrice(pair).catch(() => null),
     ]);
 
     // Add Raydium quote
@@ -123,17 +118,6 @@ export class Scanner {
         pair,
         price: orcaQuote.price,
         liquidity: orcaQuote.liquidity,
-        timestamp: Date.now(),
-      });
-    }
-
-    // Add Phoenix quote
-    if (phoenixQuote && phoenixQuote.price > 0) {
-      quotes.set('phoenix', {
-        dex: 'phoenix',
-        pair,
-        price: phoenixQuote.price,
-        liquidity: phoenixQuote.liquidity,
         timestamp: Date.now(),
       });
     }

@@ -5,11 +5,10 @@
 
 export { RaydiumClient, type RaydiumPriceQuote } from './raydium.js';
 export { OrcaClient, type OrcaPriceQuote } from './orca.js';
-export { PhoenixClient, type PhoenixPriceQuote } from './phoenix.js';
 
 // Common price quote interface for all DEXes
 export interface UnifiedPriceQuote {
-  dex: 'raydium' | 'orca' | 'phoenix';
+  dex: 'raydium' | 'orca';
   pair: string;
   price: number;
   liquidity: number;

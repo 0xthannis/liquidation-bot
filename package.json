@@ -10,8 +10,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.29.0",
-    "@ellipsis-labs/phoenix-sdk": "^1.4.2",
-    "@kamino-finance/klend-sdk": "^7.1.6",
+    "@kamino-finance/klend-sdk": "3.2.1",
     "@orca-so/common-sdk": "^0.6.4",
     "@orca-so/whirlpools-sdk": "^0.13.12",
     "@raydium-io/raydium-sdk-v2": "^0.2.32-alpha",
