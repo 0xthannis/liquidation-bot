@@ -1,7 +1,7 @@
 /**
  * Orca Whirlpools DEX Integration
- * Uses official @orca-so/whirlpools SDK
- * Documentation: https://dev.orca.so/ts/
+ * Uses official @orca-so/whirlpools-sdk (legacy)
+ * Documentation: https://dev.orca.so/
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -10,12 +10,13 @@ import {
   buildWhirlpoolClient, 
   ORCA_WHIRLPOOL_PROGRAM_ID,
   PDAUtil,
-  PoolUtil,
   PriceMath,
-  swapQuoteByInputToken,
 } from '@orca-so/whirlpools-sdk';
-import { Wallet } from '@coral-xyz/anchor';
 import Decimal from 'decimal.js';
+
+// Orca Whirlpools Config for Mainnet
+// Source: https://dev.orca.so/Architecture%20Overview/Whirlpool%20Parameters/
+const WHIRLPOOLS_CONFIG = new PublicKey('2LecshUwdy9xi7meFgHtFJQNSKk4KdTrcpvaB56dP2NQ');
 
 // Token mint addresses
 const TOKEN_MINTS: Record<string, PublicKey> = {
@@ -27,14 +28,15 @@ const TOKEN_MINTS: Record<string, PublicKey> = {
   'WIF': new PublicKey('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
 };
 
-// Known Orca Whirlpool addresses for common pairs
-// These are the most liquid whirlpools for each pair
-const WHIRLPOOL_ADDRESSES: Record<string, string> = {
-  'SOL/USDC': 'HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ',
-  'JUP/USDC': '2QdhepnKRTLjjSqPL1PtKNwqrUkoLee5Gqs8bvZhRdMv',
-  'JTO/USDC': '63mqKmR3LkrQReod89m8HHnFToNrLQRjukFSxCNqJQXK',
-  'BONK/USDC': '2nAAsYdXF3eTQzaeUQS3fr4o782dDg8L28mX39Wr5j8N',
-  'WIF/USDC': 'EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx',
+// Tick spacing (fee tier) for each pair - common values: 1, 8, 64, 128
+// 64 tick spacing = 0.30% fee tier (most common for major pairs)
+// 128 tick spacing = 1.00% fee tier (for volatile pairs)
+const TICK_SPACINGS: Record<string, number[]> = {
+  'SOL/USDC': [64, 128, 8, 1],   // Try multiple tick spacings
+  'JUP/USDC': [64, 128],
+  'JTO/USDC': [64, 128],
+  'BONK/USDC': [64, 128],
+  'WIF/USDC': [64, 128],
 };
 
 export interface OrcaPriceQuote {
@@ -80,6 +82,50 @@ export class OrcaClient {
   }
 
   /**
+   * Derive whirlpool address using PDAUtil
+   * Tries multiple tick spacings to find an existing pool
+   */
+  private async findWhirlpoolAddress(pair: string): Promise<PublicKey | null> {
+    const [base, quote] = pair.split('/');
+    const baseMint = TOKEN_MINTS[base];
+    const quoteMint = TOKEN_MINTS[quote];
+    
+    if (!baseMint || !quoteMint) {
+      console.error(`[Orca] Unknown token in pair: ${pair}`);
+      return null;
+    }
+
+    // Token order matters - smaller pubkey is tokenA
+    const [tokenMintA, tokenMintB] = baseMint.toBuffer().compare(quoteMint.toBuffer()) < 0
+      ? [baseMint, quoteMint]
+      : [quoteMint, baseMint];
+
+    const tickSpacings = TICK_SPACINGS[pair] || [64, 128];
+    
+    for (const tickSpacing of tickSpacings) {
+      try {
+        const pda = PDAUtil.getWhirlpool(
+          ORCA_WHIRLPOOL_PROGRAM_ID,
+          WHIRLPOOLS_CONFIG,
+          tokenMintA,
+          tokenMintB,
+          tickSpacing
+        );
+        
+        // Check if the pool exists
+        const accountInfo = await this.connection.getAccountInfo(pda.publicKey);
+        if (accountInfo) {
+          return pda.publicKey;
+        }
+      } catch (e) {
+        // Continue to next tick spacing
+      }
+    }
+    
+    return null;
+  }
+
+  /**
    * Get price for a trading pair from Orca Whirlpool
    * Returns price in quote tokens (USDC) per 1 base token
    */
@@ -88,15 +134,16 @@ export class OrcaClient {
       await this.initialize();
     }
 
-    const whirlpoolAddress = WHIRLPOOL_ADDRESSES[pair];
-    if (!whirlpoolAddress) {
-      console.error(`[Orca] No whirlpool found for pair: ${pair}`);
-      return null;
-    }
-
     try {
+      // Find the whirlpool address dynamically
+      const whirlpoolAddress = await this.findWhirlpoolAddress(pair);
+      if (!whirlpoolAddress) {
+        console.error(`[Orca] No whirlpool found for pair: ${pair}`);
+        return null;
+      }
+
       // Fetch the whirlpool account
-      const whirlpool = await this.client.getPool(new PublicKey(whirlpoolAddress));
+      const whirlpool = await this.client.getPool(whirlpoolAddress);
       const whirlpoolData = whirlpool.getData();
 
       // Get token info
@@ -104,7 +151,6 @@ export class OrcaClient {
       const tokenB = whirlpool.getTokenBInfo();
 
       // Calculate price from sqrtPrice
-      // sqrtPrice is stored as a Q64.64 fixed-point number
       const sqrtPriceX64 = whirlpoolData.sqrtPrice;
       const price = PriceMath.sqrtPriceX64ToPrice(
         sqrtPriceX64,
@@ -113,13 +159,11 @@ export class OrcaClient {
       );
 
       // Determine if we need to invert the price based on token order
-      const [base, quote] = pair.split('/');
+      const [base] = pair.split('/');
       const baseMint = TOKEN_MINTS[base];
       const isBaseTokenA = tokenA.mint.equals(baseMint);
 
       // Price is always tokenB/tokenA in Whirlpool
-      // If base is tokenA, price is correct (USDC per base)
-      // If base is tokenB, we need to invert
       const finalPrice = isBaseTokenA 
         ? price.toNumber() 
         : 1 / price.toNumber();
