@@ -5,6 +5,7 @@
  */
 
 import { Connection, PublicKey, VersionedTransaction, Transaction } from '@solana/web3.js';
+import { logger } from '../utils/logger.js';
 
 const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
 const RAYDIUM_PRIORITY_FEE_URL = 'https://api-v3.raydium.io/main/auto-fee';
@@ -85,8 +86,15 @@ export class RaydiumClient {
       const outputAmount = Number(data.data.outputAmount);
       const price = (outputAmount / Math.pow(10, quoteInfo.decimals)) / tokenMultiplier;
 
-      // Debug: show raw values for verification
-      console.log(`[Raydium] ${pair}: inputTokens=${tokenMultiplier}, outputAmount=${outputAmount}, price=${price}`);
+      // Debug: show raw values for verification (only when debug level enabled)
+      logger.debug(
+        `[Raydium] ${pair} quote`,
+        {
+          inputTokens: tokenMultiplier,
+          outputAmount,
+          price: Number(price.toFixed(6)),
+        }
+      );
 
       return {
         pair,

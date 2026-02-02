@@ -29,11 +29,19 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false)
   const [activeTab, setActiveTab] = useState<'opportunities' | 'transactions'>('opportunities')
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const connectWebSocket = () => {
-      const wsUrl = API_URL.replace('http://', 'ws://').replace('https://', 'wss://')
+      let wsUrl = API_URL
+      try {
+        const parsed = new URL(API_URL)
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        wsUrl = `${wsProtocol}//${parsed.host}${parsed.pathname}${parsed.search}`.replace(/\/$/, '')
+      } catch (e) {
+        console.warn('[WS] Invalid API_URL, using raw value')
+      }
+
       console.log('[WS] Connecting to:', wsUrl)
       
       const ws = new WebSocket(wsUrl)

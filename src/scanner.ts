@@ -121,7 +121,36 @@ export class Scanner {
       });
     }
 
+    if (quotes.size > 0) {
+      this.logQuoteSummary(pair, quotes);
+    }
+
     return quotes;
+  }
+
+  private logQuoteSummary(pair: string, quotes: Map<DexName, PriceQuote>): void {
+    const entries = Array.from(quotes.entries()).map(([dex, quote]) => ({
+      name: dex,
+      price: quote.price,
+    }));
+
+    if (entries.length === 0) {
+      return;
+    }
+
+    entries.sort((a, b) => a.price - b.price);
+    const lowest = entries[0];
+    const highest = entries[entries.length - 1];
+    const spreadAbs = highest.price - lowest.price;
+    const spreadPct = lowest.price > 0 ? (spreadAbs / lowest.price) * 100 : 0;
+
+    const formatted = entries
+      .map(entry => `${entry.name.toUpperCase()} $${entry.price.toFixed(6)}`)
+      .join(' | ');
+
+    logger.info(
+      `[Prices] ${pair}: ${formatted} | Δ $${spreadAbs.toFixed(6)} (${spreadPct.toFixed(3)}%)`
+    );
   }
 
   /**
