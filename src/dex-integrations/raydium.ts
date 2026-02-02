@@ -92,23 +92,35 @@ export class RaydiumClient {
       // Get the most liquid pool
       const bestPool = poolData.data[0];
       
-      // Calculate price from pool reserves
-      // Price = quoteReserve / baseReserve (adjusted for decimals)
+      // Raydium API returns price as mintB/mintA
+      // We want price in quote (USDC) per base token
       let price = 0;
       let liquidity = 0;
 
-      if (bestPool.mintA && bestPool.mintB) {
-        const isBaseA = bestPool.mintA.address === baseMint;
+      if (bestPool.mintA && bestPool.mintB && bestPool.price) {
+        // Determine token order in the pool
+        const poolMintA = bestPool.mintA.address;
+        const poolMintB = bestPool.mintB.address;
         
-        if (isBaseA) {
+        // price from API = mintB / mintA
+        // If our base token is mintA: price = quote/base (correct)
+        // If our base token is mintB: price = base/quote (need to invert)
+        const isBaseTokenA = poolMintA === baseMint;
+        
+        if (isBaseTokenA) {
           // mintA is base, mintB is quote
-          price = bestPool.price || 0;
+          // API price = mintB/mintA = quote/base (correct)
+          price = bestPool.price;
         } else {
-          // mintB is base, mintA is quote - invert price
-          price = bestPool.price ? 1 / bestPool.price : 0;
+          // mintB is base, mintA is quote  
+          // API price = mintB/mintA = base/quote (need to invert)
+          price = 1 / bestPool.price;
         }
 
         liquidity = bestPool.tvl || 0;
+        
+        // Debug logging
+        console.log(`[Raydium] ${pair}: poolMintA=${poolMintA.slice(0,8)}, poolMintB=${poolMintB.slice(0,8)}, baseMint=${baseMint.slice(0,8)}, isBaseTokenA=${isBaseTokenA}, rawPrice=${bestPool.price}, finalPrice=${price}`);
       }
 
       return {

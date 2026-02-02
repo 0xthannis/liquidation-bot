@@ -151,6 +151,7 @@ export class OrcaClient {
       const tokenB = whirlpool.getTokenBInfo();
 
       // Calculate price from sqrtPrice
+      // sqrtPriceX64ToPrice returns tokenB/tokenA (price of tokenA in terms of tokenB)
       const sqrtPriceX64 = whirlpoolData.sqrtPrice;
       const price = PriceMath.sqrtPriceX64ToPrice(
         sqrtPriceX64,
@@ -163,13 +164,18 @@ export class OrcaClient {
       const baseMint = TOKEN_MINTS[base];
       const isBaseTokenA = tokenA.mint.equals(baseMint);
 
-      // Price is always tokenB/tokenA in Whirlpool
+      // Price from SDK = tokenB/tokenA
+      // If base is tokenA: price = tokenB/tokenA = quote/base (correct)
+      // If base is tokenB: price = tokenB/tokenA = base/quote (need to invert)
       const finalPrice = isBaseTokenA 
         ? price.toNumber() 
         : 1 / price.toNumber();
 
       // Estimate liquidity from token amounts
       const liquidity = whirlpoolData.liquidity.toNumber();
+      
+      // Debug logging
+      console.log(`[Orca] ${pair}: tokenA=${tokenA.mint.toString().slice(0,8)}, tokenB=${tokenB.mint.toString().slice(0,8)}, baseMint=${baseMint.toString().slice(0,8)}, isBaseTokenA=${isBaseTokenA}, rawPrice=${price.toNumber()}, finalPrice=${finalPrice}`);
 
       return {
         pair,
