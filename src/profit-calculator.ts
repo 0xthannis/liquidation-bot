@@ -2,12 +2,11 @@ import Decimal from 'decimal.js';
 
 /**
  * DEX fee structures (as decimals)
+ * Source: Raydium docs, Orca docs
  */
 export const DEX_FEES: Record<string, number> = {
-  raydium: 0.0025,   // 0.25%
-  orca: 0.0025,      // 0.25%
-  meteora: 0.0020,   // 0.20%
-  phoenix: 0.0010,   // 0.10%
+  raydium: 0.0025,   // 0.25% (CLMM/CPMM standard)
+  orca: 0.0030,      // 0.30% (Whirlpool tick spacing 64)
 };
 
 /**
@@ -57,17 +56,22 @@ export function calculateNetProfitAfterTip(
 
 /**
  * Minimum spread thresholds for profitability
+ * Calculated as: flash_fee + buy_fee + sell_fee + slippage + margin
+ * 
+ * Raydium-Raydium: 0.001% + 0.25% + 0.25% + 0.10% + 0.15% margin = 0.751%
+ * Raydium-Orca:    0.001% + 0.25% + 0.30% + 0.10% + 0.15% margin = 0.801%
+ * Orca-Raydium:    0.001% + 0.30% + 0.25% + 0.10% + 0.15% margin = 0.801%
+ * Orca-Orca:       0.001% + 0.30% + 0.30% + 0.10% + 0.15% margin = 0.851%
  */
 export const MIN_SPREAD_THRESHOLDS: Record<string, number> = {
-  'phoenix-meteora': 0.0030,      // 0.30%
-  'phoenix-raydium': 0.0035,      // 0.35%
-  'phoenix-orca': 0.0035,         // 0.35%
-  'meteora-phoenix': 0.0030,      // 0.30%
-  'meteora-raydium': 0.0050,      // 0.50%
-  'meteora-orca': 0.0050,         // 0.50%
-  'raydium-orca': 0.0060,         // 0.60%
-  'orca-raydium': 0.0060,         // 0.60%
+  'raydium-raydium': 0.0075,     // 0.75%
+  'raydium-orca': 0.0080,        // 0.80%
+  'orca-raydium': 0.0080,        // 0.80%
+  'orca-orca': 0.0085,           // 0.85%
 };
+
+// Default minimum spread if pair not found
+export const DEFAULT_MIN_SPREAD = 0.0080; // 0.80%
 
 export interface ProfitCalculation {
   grossProfit: number;
@@ -110,7 +114,7 @@ export function calculateSpread(buyPrice: number, sellPrice: number): { spread: 
 export function meetsMinimumSpread(buyDex: string, sellDex: string, spreadPercent: number): boolean {
   const key = `${buyDex}-${sellDex}`;
   const reverseKey = `${sellDex}-${buyDex}`;
-  const threshold = MIN_SPREAD_THRESHOLDS[key] || MIN_SPREAD_THRESHOLDS[reverseKey] || 0.005;
+  const threshold = MIN_SPREAD_THRESHOLDS[key] || MIN_SPREAD_THRESHOLDS[reverseKey] || DEFAULT_MIN_SPREAD;
   return spreadPercent >= threshold;
 }
 
