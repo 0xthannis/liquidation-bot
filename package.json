@@ -10,13 +10,14 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.29.0",
-    "@ellipsis-labs/phoenix-sdk": "^1.4.1",
-    "@kamino-finance/klend-sdk": "^3.2.1",
-    "@meteora-ag/dlmm": "^1.0.0",
-    "@orca-so/whirlpools-sdk": "^0.13.0",
-    "@raydium-io/raydium-sdk-v2": "latest",
-    "@solana/spl-token": "^0.4.0",
+    "@coral-xyz/anchor": "0.31.0",
+    "@coral-xyz/borsh": "0.31.0",
+    "@ellipsis-labs/phoenix-sdk": "^2.0.4",
+    "@kamino-finance/klend-sdk": "^7.1.6",
+    "@meteora-ag/dlmm": "^1.9.3",
+    "@orca-so/whirlpools-sdk": "^0.13.12",
+    "@raydium-io/raydium-sdk-v2": "^0.2.32-alpha",
+    "@solana/spl-token": "^0.4.6",
     "@solana/web3.js": "^1.95.8",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",
@@ -29,5 +30,9 @@
     "@types/node": "^20.10.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"
+  },
+  "overrides": {
+    "@coral-xyz/anchor": "0.31.0",
+    "@coral-xyz/borsh": "0.31.0"
   }
 }
