@@ -1,20 +1,21 @@
 /**
  * Raydium DEX Integration
- * Uses official @raydium-io/raydium-sdk-v2
- * Documentation: https://github.com/raydium-io/raydium-sdk-V2
+ * Uses official Raydium Trade API
+ * Documentation: https://docs.raydium.io/raydium/traders/trade-api
  */
 
-import { Connection, PublicKey, Keypair } from '@solana/web3.js';
-import { Raydium, PoolFetchType } from '@raydium-io/raydium-sdk-v2';
+import { Connection } from '@solana/web3.js';
 
-// Token mint addresses
-const TOKEN_MINTS: Record<string, string> = {
-  'SOL': 'So11111111111111111111111111111111111111112',
-  'USDC': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  'JUP': 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-  'JTO': 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
-  'BONK': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-  'WIF': 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
+
+// Token mint addresses and decimals
+const TOKEN_INFO: Record<string, { mint: string; decimals: number }> = {
+  'SOL': { mint: 'So11111111111111111111111111111111111111112', decimals: 9 },
+  'USDC': { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
+  'JUP': { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', decimals: 6 },
+  'JTO': { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', decimals: 9 },
+  'BONK': { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', decimals: 5 },
+  'WIF': { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', decimals: 6 },
 };
 
 export interface RaydiumPriceQuote {
@@ -26,109 +27,67 @@ export interface RaydiumPriceQuote {
 }
 
 /**
- * Raydium DEX client for fetching pool prices
+ * Raydium DEX client using Trade API
+ * https://docs.raydium.io/raydium/traders/trade-api
  */
 export class RaydiumClient {
   private connection: Connection;
-  private raydium: Raydium | null = null;
   private initialized = false;
 
   constructor(connection: Connection) {
     this.connection = connection;
   }
 
-  /**
-   * Initialize the Raydium SDK
-   */
   async initialize(): Promise<void> {
     if (this.initialized) return;
-
-    try {
-      // Initialize Raydium SDK without owner (read-only mode)
-      this.raydium = await Raydium.load({
-        connection: this.connection,
-        disableLoadToken: true, // We don't need full token list
-      });
-      this.initialized = true;
-      console.log('[Raydium] SDK initialized');
-    } catch (e) {
-      console.error('[Raydium] Failed to initialize SDK:', e);
-      throw e;
-    }
+    this.initialized = true;
+    console.log('[Raydium] SDK initialized');
   }
 
   /**
-   * Get price for a trading pair from Raydium pools
+   * Get price using Raydium Trade API swap quote
    * Returns price in quote tokens (USDC) per 1 base token
    */
   async getPrice(pair: string): Promise<RaydiumPriceQuote | null> {
-    if (!this.raydium) {
-      await this.initialize();
-    }
-
     const [base, quote] = pair.split('/');
-    const baseMint = TOKEN_MINTS[base];
-    const quoteMint = TOKEN_MINTS[quote];
+    const baseInfo = TOKEN_INFO[base];
+    const quoteInfo = TOKEN_INFO[quote];
 
-    if (!baseMint || !quoteMint) {
+    if (!baseInfo || !quoteInfo) {
       console.error(`[Raydium] Unknown tokens in pair: ${pair}`);
       return null;
     }
 
     try {
-      // Fetch pools for this token pair using the API
-      const poolData = await this.raydium!.api.fetchPoolByMints({
-        mint1: baseMint,
-        mint2: quoteMint,
-        type: PoolFetchType.All,
-        sort: 'liquidity',
-        order: 'desc',
-      });
-
-      if (!poolData || !poolData.data || poolData.data.length === 0) {
+      // Use 1 unit of base token to get price quote
+      const inputAmount = Math.pow(10, baseInfo.decimals); // 1 token in base units
+      
+      const url = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${baseInfo.mint}&outputMint=${quoteInfo.mint}&amount=${inputAmount}&slippageBps=50&txVersion=V0`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success || !data.data) {
         return null;
       }
 
-      // Get the most liquid pool
-      const bestPool = poolData.data[0];
-      
-      // Raydium API returns price as mintB/mintA
-      // We want price in quote (USDC) per base token
-      let price = 0;
-      let liquidity = 0;
+      // Calculate price from output amount
+      // outputAmount is in quote token base units
+      const outputAmount = Number(data.data.outputAmount);
+      const price = outputAmount / Math.pow(10, quoteInfo.decimals);
 
-      if (bestPool.mintA && bestPool.mintB && bestPool.price) {
-        // Determine token order in the pool
-        const poolMintA = bestPool.mintA.address;
-        const poolMintB = bestPool.mintB.address;
-        
-        // price from API = mintB / mintA
-        // If our base token is mintA: price = quote/base (correct)
-        // If our base token is mintB: price = base/quote (need to invert)
-        const isBaseTokenA = poolMintA === baseMint;
-        
-        if (isBaseTokenA) {
-          // mintA is base, mintB is quote
-          // API price = mintB/mintA = quote/base (correct)
-          price = bestPool.price;
-        } else {
-          // mintB is base, mintA is quote  
-          // API price = mintB/mintA = base/quote (need to invert)
-          price = 1 / bestPool.price;
-        }
-
-        liquidity = bestPool.tvl || 0;
-        
-        // Debug logging
-        console.log(`[Raydium] ${pair}: poolMintA=${poolMintA.slice(0,8)}, poolMintB=${poolMintB.slice(0,8)}, baseMint=${baseMint.slice(0,8)}, isBaseTokenA=${isBaseTokenA}, rawPrice=${bestPool.price}, finalPrice=${price}`);
-      }
+      console.log(`[Raydium] ${pair}: price=${price}`);
 
       return {
         pair,
         price,
-        liquidity,
-        poolId: bestPool.id,
-        poolType: bestPool.type,
+        liquidity: 0, // Not available from this API
+        poolId: data.data.routePlan?.[0]?.poolId || '',
+        poolType: 'swap',
       };
 
     } catch (e) {
@@ -137,21 +96,15 @@ export class RaydiumClient {
     }
   }
 
-  /**
-   * Get prices for multiple pairs
-   */
   async getPrices(pairs: string[]): Promise<Map<string, RaydiumPriceQuote>> {
     const results = new Map<string, RaydiumPriceQuote>();
-
     for (const pair of pairs) {
       const quote = await this.getPrice(pair);
       if (quote) {
         results.set(pair, quote);
       }
-      // Small delay between API calls
       await new Promise(r => setTimeout(r, 100));
     }
-
     return results;
   }
 }

@@ -10,27 +10,27 @@ import {
   buildWhirlpoolClient, 
   ORCA_WHIRLPOOL_PROGRAM_ID,
   PDAUtil,
-  PriceMath,
+  swapQuoteByInputToken,
+  IGNORE_CACHE,
 } from '@orca-so/whirlpools-sdk';
-import Decimal from 'decimal.js';
+import { Percentage } from '@orca-so/common-sdk';
+import BN from 'bn.js';
 
 // Orca Whirlpools Config for Mainnet
-// Source: https://dev.orca.so/Architecture%20Overview/Whirlpool%20Parameters/
 const WHIRLPOOLS_CONFIG = new PublicKey('2LecshUwdy9xi7meFgHtFJQNSKk4KdTrcpvaB56dP2NQ');
 
-// Token mint addresses
-const TOKEN_MINTS: Record<string, PublicKey> = {
-  'SOL': new PublicKey('So11111111111111111111111111111111111111112'),
-  'USDC': new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
-  'JUP': new PublicKey('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'),
-  'JTO': new PublicKey('jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
-  'BONK': new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
-  'WIF': new PublicKey('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+// Token mint addresses and decimals
+const TOKEN_INFO: Record<string, { mint: PublicKey; decimals: number }> = {
+  'SOL': { mint: new PublicKey('So11111111111111111111111111111111111111112'), decimals: 9 },
+  'USDC': { mint: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), decimals: 6 },
+  'JUP': { mint: new PublicKey('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'), decimals: 6 },
+  'JTO': { mint: new PublicKey('jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'), decimals: 9 },
+  'BONK': { mint: new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'), decimals: 5 },
+  'WIF': { mint: new PublicKey('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'), decimals: 6 },
 };
 
-// Tick spacing (fee tier) for each pair - common values: 1, 8, 64, 128, 256
-// We try all common tick spacings and pick the pool with highest liquidity
-const ALL_TICK_SPACINGS = [1, 2, 4, 8, 16, 64, 128, 256];
+// Main tick spacings to check (most liquid pools use these)
+const TICK_SPACINGS = [64, 128, 8, 1];
 
 export interface OrcaPriceQuote {
   pair: string;
@@ -74,29 +74,33 @@ export class OrcaClient {
     }
   }
 
+  // Cache for pool addresses
+  private poolCache: Map<string, PublicKey> = new Map();
+
   /**
-   * Derive whirlpool address using PDAUtil
-   * Tries all tick spacings and returns the pool with highest liquidity
+   * Find whirlpool address for a pair
    */
-  private async findBestWhirlpool(pair: string): Promise<{ address: PublicKey; tickSpacing: number } | null> {
+  private async findWhirlpool(pair: string): Promise<PublicKey | null> {
+    // Check cache first
+    if (this.poolCache.has(pair)) {
+      return this.poolCache.get(pair)!;
+    }
+
     const [base, quote] = pair.split('/');
-    const baseMint = TOKEN_MINTS[base];
-    const quoteMint = TOKEN_MINTS[quote];
+    const baseInfo = TOKEN_INFO[base];
+    const quoteInfo = TOKEN_INFO[quote];
     
-    if (!baseMint || !quoteMint) {
-      console.error(`[Orca] Unknown token in pair: ${pair}`);
+    if (!baseInfo || !quoteInfo) {
       return null;
     }
 
     // Token order matters - smaller pubkey is tokenA
-    const [tokenMintA, tokenMintB] = baseMint.toBuffer().compare(quoteMint.toBuffer()) < 0
-      ? [baseMint, quoteMint]
-      : [quoteMint, baseMint];
+    const [tokenMintA, tokenMintB] = baseInfo.mint.toBuffer().compare(quoteInfo.mint.toBuffer()) < 0
+      ? [baseInfo.mint, quoteInfo.mint]
+      : [quoteInfo.mint, baseInfo.mint];
 
-    let bestPool: { address: PublicKey; tickSpacing: number; liquidity: number } | null = null;
-    
-    // Try all tick spacings and find the one with highest liquidity
-    for (const tickSpacing of ALL_TICK_SPACINGS) {
+    // Try tick spacings in order of typical liquidity
+    for (const tickSpacing of TICK_SPACINGS) {
       try {
         const pda = PDAUtil.getWhirlpool(
           ORCA_WHIRLPOOL_PROGRAM_ID,
@@ -106,92 +110,73 @@ export class OrcaClient {
           tickSpacing
         );
         
-        // Check if the pool exists
         const accountInfo = await this.connection.getAccountInfo(pda.publicKey);
         if (accountInfo) {
-          // Get pool data to check liquidity
-          try {
-            const whirlpool = await this.client.getPool(pda.publicKey);
-            const data = whirlpool.getData();
-            const liquidity = data.liquidity.toNumber();
-            
-            if (!bestPool || liquidity > bestPool.liquidity) {
-              bestPool = { address: pda.publicKey, tickSpacing, liquidity };
-            }
-          } catch (e) {
-            // Pool exists but couldn't fetch data, skip
-          }
+          this.poolCache.set(pair, pda.publicKey);
+          return pda.publicKey;
         }
       } catch (e) {
-        // Continue to next tick spacing
+        // Continue
       }
     }
     
-    if (bestPool) {
-      console.log(`[Orca] ${pair}: Best pool tick spacing=${bestPool.tickSpacing}, liquidity=${bestPool.liquidity}`);
-    }
-    
-    return bestPool;
+    return null;
   }
 
   /**
-   * Get price for a trading pair from Orca Whirlpool
+   * Get price using swapQuoteByInputToken
    * Returns price in quote tokens (USDC) per 1 base token
    */
   async getPrice(pair: string): Promise<OrcaPriceQuote | null> {
-    if (!this.client) {
+    if (!this.client || !this.ctx) {
       await this.initialize();
     }
 
+    const [base, quote] = pair.split('/');
+    const baseInfo = TOKEN_INFO[base];
+    const quoteInfo = TOKEN_INFO[quote];
+
+    if (!baseInfo || !quoteInfo) {
+      console.error(`[Orca] Unknown tokens in pair: ${pair}`);
+      return null;
+    }
+
     try {
-      // Find the best whirlpool (highest liquidity) for this pair
-      const bestPool = await this.findBestWhirlpool(pair);
-      if (!bestPool) {
+      const poolAddress = await this.findWhirlpool(pair);
+      if (!poolAddress) {
         console.error(`[Orca] No whirlpool found for pair: ${pair}`);
         return null;
       }
 
-      // Fetch the whirlpool account
-      const whirlpool = await this.client.getPool(bestPool.address);
-      const whirlpoolData = whirlpool.getData();
+      const whirlpool = await this.client.getPool(poolAddress);
+      
+      // Use swapQuoteByInputToken to get accurate price
+      // Swap 1 unit of base token to see how much quote we get
+      const inputAmount = new BN(Math.pow(10, baseInfo.decimals)); // 1 token
+      const slippage = Percentage.fromFraction(1, 100); // 1%
 
-      // Get token info
-      const tokenA = whirlpool.getTokenAInfo();
-      const tokenB = whirlpool.getTokenBInfo();
-
-      // Calculate price from sqrtPrice
-      // sqrtPriceX64ToPrice returns tokenB/tokenA (price of tokenA in terms of tokenB)
-      const sqrtPriceX64 = whirlpoolData.sqrtPrice;
-      const price = PriceMath.sqrtPriceX64ToPrice(
-        sqrtPriceX64,
-        tokenA.decimals,
-        tokenB.decimals
+      const swapQuote = await swapQuoteByInputToken(
+        whirlpool,
+        baseInfo.mint,
+        inputAmount,
+        slippage,
+        ORCA_WHIRLPOOL_PROGRAM_ID,
+        this.ctx!.fetcher,
+        IGNORE_CACHE
       );
 
-      // Determine if we need to invert the price based on token order
-      const [base] = pair.split('/');
-      const baseMint = TOKEN_MINTS[base];
-      const isBaseTokenA = tokenA.mint.equals(baseMint);
+      // Calculate price from quote
+      const outputAmount = swapQuote.estimatedAmountOut.toNumber();
+      const price = outputAmount / Math.pow(10, quoteInfo.decimals);
 
-      // Price from SDK = tokenB/tokenA
-      // If base is tokenA: price = tokenB/tokenA = quote/base (correct)
-      // If base is tokenB: price = tokenB/tokenA = base/quote (need to invert)
-      const finalPrice = isBaseTokenA 
-        ? price.toNumber() 
-        : 1 / price.toNumber();
-
-      // Estimate liquidity from token amounts
-      const liquidity = whirlpoolData.liquidity.toNumber();
-      
-      // Debug logging
-      console.log(`[Orca] ${pair}: tokenA=${tokenA.mint.toString().slice(0,8)}, tokenB=${tokenB.mint.toString().slice(0,8)}, baseMint=${baseMint.toString().slice(0,8)}, isBaseTokenA=${isBaseTokenA}, rawPrice=${price.toNumber()}, finalPrice=${finalPrice}`);
+      console.log(`[Orca] ${pair}: price=${price}`);
 
       return {
         pair,
-        price: finalPrice,
-        liquidity,
-        sqrtPrice: sqrtPriceX64.toString(),
-        tickCurrentIndex: whirlpoolData.tickCurrentIndex,
+        price,
+        liquidity: whirlpool.getData().liquidity.toNumber(),
+        sqrtPrice: whirlpool.getData().sqrtPrice.toString(),
+        tickCurrentIndex: whirlpool.getData().tickCurrentIndex,
       };
 
     } catch (e) {
