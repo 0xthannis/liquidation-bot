@@ -28,16 +28,9 @@ const TOKEN_MINTS: Record<string, PublicKey> = {
   'WIF': new PublicKey('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
 };
 
-// Tick spacing (fee tier) for each pair - common values: 1, 8, 64, 128
-// 64 tick spacing = 0.30% fee tier (most common for major pairs)
-// 128 tick spacing = 1.00% fee tier (for volatile pairs)
-const TICK_SPACINGS: Record<string, number[]> = {
-  'SOL/USDC': [64, 128, 8, 1],   // Try multiple tick spacings
-  'JUP/USDC': [64, 128],
-  'JTO/USDC': [64, 128],
-  'BONK/USDC': [64, 128],
-  'WIF/USDC': [64, 128],
-};
+// Tick spacing (fee tier) for each pair - common values: 1, 8, 64, 128, 256
+// We try all common tick spacings and pick the pool with highest liquidity
+const ALL_TICK_SPACINGS = [1, 2, 4, 8, 16, 64, 128, 256];
 
 export interface OrcaPriceQuote {
   pair: string;
@@ -83,9 +76,9 @@ export class OrcaClient {
 
   /**
    * Derive whirlpool address using PDAUtil
-   * Tries multiple tick spacings to find an existing pool
+   * Tries all tick spacings and returns the pool with highest liquidity
    */
-  private async findWhirlpoolAddress(pair: string): Promise<PublicKey | null> {
+  private async findBestWhirlpool(pair: string): Promise<{ address: PublicKey; tickSpacing: number } | null> {
     const [base, quote] = pair.split('/');
     const baseMint = TOKEN_MINTS[base];
     const quoteMint = TOKEN_MINTS[quote];
@@ -100,9 +93,10 @@ export class OrcaClient {
       ? [baseMint, quoteMint]
       : [quoteMint, baseMint];
 
-    const tickSpacings = TICK_SPACINGS[pair] || [64, 128];
+    let bestPool: { address: PublicKey; tickSpacing: number; liquidity: number } | null = null;
     
-    for (const tickSpacing of tickSpacings) {
+    // Try all tick spacings and find the one with highest liquidity
+    for (const tickSpacing of ALL_TICK_SPACINGS) {
       try {
         const pda = PDAUtil.getWhirlpool(
           ORCA_WHIRLPOOL_PROGRAM_ID,
@@ -115,14 +109,29 @@ export class OrcaClient {
         // Check if the pool exists
         const accountInfo = await this.connection.getAccountInfo(pda.publicKey);
         if (accountInfo) {
-          return pda.publicKey;
+          // Get pool data to check liquidity
+          try {
+            const whirlpool = await this.client.getPool(pda.publicKey);
+            const data = whirlpool.getData();
+            const liquidity = data.liquidity.toNumber();
+            
+            if (!bestPool || liquidity > bestPool.liquidity) {
+              bestPool = { address: pda.publicKey, tickSpacing, liquidity };
+            }
+          } catch (e) {
+            // Pool exists but couldn't fetch data, skip
+          }
         }
       } catch (e) {
         // Continue to next tick spacing
       }
     }
     
-    return null;
+    if (bestPool) {
+      console.log(`[Orca] ${pair}: Best pool tick spacing=${bestPool.tickSpacing}, liquidity=${bestPool.liquidity}`);
+    }
+    
+    return bestPool;
   }
 
   /**
@@ -135,15 +144,15 @@ export class OrcaClient {
     }
 
     try {
-      // Find the whirlpool address dynamically
-      const whirlpoolAddress = await this.findWhirlpoolAddress(pair);
-      if (!whirlpoolAddress) {
+      // Find the best whirlpool (highest liquidity) for this pair
+      const bestPool = await this.findBestWhirlpool(pair);
+      if (!bestPool) {
         console.error(`[Orca] No whirlpool found for pair: ${pair}`);
         return null;
       }
 
       // Fetch the whirlpool account
-      const whirlpool = await this.client.getPool(whirlpoolAddress);
+      const whirlpool = await this.client.getPool(bestPool.address);
       const whirlpoolData = whirlpool.getData();
 
       // Get token info
