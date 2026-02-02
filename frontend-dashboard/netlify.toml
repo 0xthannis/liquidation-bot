@@ -2,6 +2,17 @@
   command = "npm run build"
   publish = "dist"
 
+[build.environment]
+  NODE_VERSION = "18"
+
+# Disable Next.js plugin - this is a Vite project
+[context.production]
+  command = "npm run build"
+  publish = "dist"
+
+[[plugins]]
+  package = "@netlify/plugin-local-install-core"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

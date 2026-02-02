@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 
 interface Props {
   isConnected: boolean
-  botStatus: 'running' | 'stopped' | 'error'
+  botStatus: 'running' | 'stopped' | 'error' | 'disconnected'
 }
 
 export default function ConnectionStatus({ isConnected, botStatus }: Props) {

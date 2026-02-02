@@ -2,6 +2,9 @@ import 'dotenv/config';
 import { Connection, Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 import express from 'express';
+import cors from 'cors';
+import { WebSocketServer, WebSocket } from 'ws';
+import http from 'http';
 import { logger } from './utils/logger.js';
 import { Scanner, TRADING_PAIRS, DEX_LIST } from './scanner.js';
 import { Executor } from './executor.js';
@@ -28,7 +31,7 @@ const CONFIG = {
   AUTO_EXECUTE: process.env.AUTO_EXECUTE === 'true',
   
   // API Server
-  API_PORT: parseInt(process.env.API_PORT || '3000'),
+  API_PORT: parseInt(process.env.API_PORT || '3001'),
   ENABLE_API: process.env.ENABLE_API !== 'false',
 };
 
@@ -201,41 +204,37 @@ class ArbitrageBot {
     return `${hours}h ${minutes}m`;
   }
 
+  private wsClients: Set<WebSocket> = new Set();
+
   private startApiServer(): void {
     const app = express();
+    
+    // Enable CORS for frontend
+    app.use(cors({
+      origin: '*',
+      methods: ['GET', 'POST'],
+    }));
 
     app.get('/api/stats', (req, res) => {
-      const executorStats = this.executor.getStats();
-      const scannerStats = this.scanner.getStats();
-      
-      res.json({
-        uptime: this.formatUptime(Date.now() - stats.startTime),
-        totalScans: stats.totalScans,
-        opportunitiesDetected: stats.opportunitiesDetected,
-        tradesExecuted: stats.tradesExecuted,
-        tradesSuccessful: stats.tradesSuccessful,
-        totalProfitUsd: stats.totalProfitUsd.toFixed(2),
-        avgProfitPerTrade: stats.tradesSuccessful > 0 
-          ? (stats.totalProfitUsd / stats.tradesSuccessful).toFixed(2)
-          : '0.00',
-        successRate: stats.tradesExecuted > 0
-          ? (stats.tradesSuccessful / stats.tradesExecuted).toFixed(3)
-          : '0.000',
-        config: {
-          dryRun: CONFIG.DRY_RUN,
-          autoExecute: CONFIG.AUTO_EXECUTE,
-          minProfitUsd: CONFIG.MIN_PROFIT_USD,
-          scanIntervalMs: CONFIG.SCAN_INTERVAL_MS,
-        },
-        pairs: TRADING_PAIRS,
-        dexes: DEX_LIST,
-      });
+      res.json(this.getBotData());
     });
 
     app.get('/api/opportunities', (req, res) => {
       res.json({
         count: stats.recentOpportunities.length,
-        opportunities: stats.recentOpportunities.slice(0, 20),
+        opportunities: stats.recentOpportunities.slice(0, 50).map(opp => ({
+          id: `${opp.pair}-${opp.timestamp}`,
+          timestamp: opp.timestamp,
+          pair: opp.pair,
+          buyDex: opp.buyDex,
+          sellDex: opp.sellDex,
+          buyPrice: opp.buyPrice,
+          sellPrice: opp.sellPrice,
+          spreadPercent: opp.spreadPercent * 100,
+          flashAmount: opp.flashAmount,
+          expectedProfit: opp.calculation.netProfit,
+          status: 'detected',
+        })),
       });
     });
 
@@ -243,9 +242,75 @@ class ArbitrageBot {
       res.json({ status: 'ok', timestamp: Date.now() });
     });
 
-    app.listen(CONFIG.API_PORT, () => {
-      logger.success(`API server running on port ${CONFIG.API_PORT}`);
+    // Create HTTP server
+    const server = http.createServer(app);
+
+    // Create WebSocket server
+    const wss = new WebSocketServer({ server });
+
+    wss.on('connection', (ws: WebSocket) => {
+      logger.info('[WS] Client connected');
+      this.wsClients.add(ws);
+
+      // Send initial state
+      ws.send(JSON.stringify({
+        type: 'init',
+        data: this.getBotData(),
+      }));
+
+      ws.on('close', () => {
+        this.wsClients.delete(ws);
+        logger.info('[WS] Client disconnected');
+      });
     });
+
+    server.listen(CONFIG.API_PORT, '0.0.0.0', () => {
+      logger.success(`API + WebSocket server running on port ${CONFIG.API_PORT}`);
+    });
+  }
+
+  private getBotData() {
+    return {
+      botData: {
+        status: this.running ? 'running' : 'stopped',
+        uptime: Math.floor((Date.now() - stats.startTime) / 1000),
+        totalScans: stats.totalScans,
+        opportunitiesFound: stats.opportunitiesDetected,
+        executedTrades: stats.tradesExecuted,
+        failedTrades: stats.tradesExecuted - stats.tradesSuccessful,
+        totalProfit: stats.totalProfitUsd,
+        todayProfit: stats.totalProfitUsd,
+        solPrice: 0,
+      },
+      opportunities: stats.recentOpportunities.slice(0, 50).map(opp => ({
+        id: `${opp.pair}-${opp.timestamp}`,
+        timestamp: opp.timestamp,
+        pair: opp.pair,
+        buyDex: opp.buyDex,
+        sellDex: opp.sellDex,
+        buyPrice: opp.buyPrice,
+        sellPrice: opp.sellPrice,
+        spreadPercent: opp.spreadPercent * 100,
+        flashAmount: opp.flashAmount,
+        expectedProfit: opp.calculation.netProfit,
+        status: 'detected',
+      })),
+      transactions: [],
+    };
+  }
+
+  // Broadcast update to all WebSocket clients
+  private broadcastUpdate(): void {
+    const data = JSON.stringify({
+      type: 'update',
+      data: this.getBotData(),
+    });
+    
+    for (const client of this.wsClients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    }
   }
 
   stop(): void {

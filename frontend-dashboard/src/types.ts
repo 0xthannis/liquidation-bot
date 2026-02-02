@@ -1,5 +1,5 @@
 export interface BotData {
-  status: 'running' | 'stopped' | 'error'
+  status: 'running' | 'stopped' | 'error' | 'disconnected'
   uptime: number
   totalScans: number
   opportunitiesFound: number
