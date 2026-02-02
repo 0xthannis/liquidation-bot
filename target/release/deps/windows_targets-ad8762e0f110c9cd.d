@@ -1,7 +1,0 @@
-C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\windows_targets-ad8762e0f110c9cd.d: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-targets-0.52.6\src\lib.rs
-
-C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libwindows_targets-ad8762e0f110c9cd.rlib: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-targets-0.52.6\src\lib.rs
-
-C:\Users\adtha\Documents\Ares\CascadeProjects\windsurf-project\target\release\deps\libwindows_targets-ad8762e0f110c9cd.rmeta: C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-targets-0.52.6\src\lib.rs
-
-C:\Users\adtha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-targets-0.52.6\src\lib.rs:

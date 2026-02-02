@@ -1,309 +1,112 @@
-# 🤖 Solana Liquidation Bot - Production Ready
+# ⚡ Flash Loan Arbitrage Bot
 
-Bot de liquidation automatique pour Solana. Scanne et liquide les positions undercollateralized sur **Kamino**, **Marginfi** et **Jupiter Lend** via flash loans (capital zéro requis).
+Multi-DEX arbitrage bot using Kamino flash loans on Solana.
 
-## 🚀 DÉMARRAGE RAPIDE (3 clics)
+## Features
 
-### Étape 1: Installation
-**Double-cliquez sur `INSTALL.bat`**
-- Installe Rust automatiquement si nécessaire
-- Compile le bot
+- **Multi-DEX Scanning**: Raydium, Orca, Meteora, Phoenix
+- **Dynamic Sizing**: Optimal flash loan amounts based on liquidity
+- **Slippage Protection**: Estimates slippage before execution
+- **Rate Limiting**: ThrottledConnection for free RPC tiers
+- **API Monitoring**: REST API for stats and opportunities
 
-### Étape 2: Test (Mode Simulation)
-**Double-cliquez sur `START_BOT.bat`**
-- Lance le bot en mode dry-run (simulation)
-- Aucune vraie transaction exécutée
-- Vérifie que tout fonctionne
+## Trading Pairs
 
-### Étape 3: Production (Argent Réel)
-**Double-cliquez sur `START_PRODUCTION.bat`**
-- ⚠️ Exécute de vraies liquidations
-- Gagne de l'argent automatiquement
+- SOL/USDC
+- JUP/USDC
+- JTO/USDC
+- BONK/USDC
+- WIF/USDC
 
----
-
-## ⚡ Fonctionnalités
-
-- **Multi-protocoles**: Support Kamino, Marginfi, Jupiter Lend
-- **Flash Loans**: Utilisation de flash loans Kamino pour un capital zéro
-- **Oracles temps réel**: Intégration Pyth/Switchboard pour les prix
-- **Optimisé pour le profit**: Calcul dynamique du profit avec slippage et frais
-- **Polling intelligent**: Scan périodique configurable (1-2 minutes)
-- **Mode dry-run**: Simulation sans risque avant déploiement
-- **Monitoring complet**: Logs détaillés et statistiques en temps réel
-
-## 🚀 Installation
-
-### Prérequis
-- Rust 1.70+
-- Solana CLI 1.18+
-- Wallet Solana avec SOL pour les frais
-
-### Build
-```bash
-# Cloner le projet
-git clone <repository-url>
-cd solana-liquidation-bot
-
-# Compiler en mode release
-cargo build --release
-
-# Ou lancer directement
-cargo run --release --help
-```
-
-## ⚙️ Configuration
-
-### 1. Variables d'environnement
-Copiez `.env.example` vers `.env` et configurez:
+## Quick Start
 
 ```bash
+# Install dependencies
+npm install
+
+# Configure environment
 cp .env.example .env
+# Edit .env with your RPC URL and wallet key
+
+# Run in dry-run mode (recommended first)
+npm start
+
+# Enable live trading
+# Edit .env: DRY_RUN=false, AUTO_EXECUTE=true
 ```
 
-Variables requises:
-- `WALLET_PRIVATE_KEY`: Clé privée du wallet (base58)
-- `HELIUS_RPC_URL` ou `HELIUS_API_KEY`: Endpoint RPC Helius
+## Configuration
 
-### 2. Configuration avancée
-```bash
-# Intervalle de polling (secondes)
-POLL_INTERVAL_SECONDS=60
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RPC_URL` | - | Solana RPC endpoint |
+| `WALLET_PRIVATE_KEY` | - | Base58 encoded private key |
+| `MIN_PROFIT_USD` | 10 | Minimum profit to execute |
+| `MAX_SLIPPAGE_TOLERANCE` | 0.003 | Max 0.3% slippage |
+| `SCAN_INTERVAL_MS` | 1000 | Scan every 1 second |
+| `DRY_RUN` | true | Log only, no execution |
+| `AUTO_EXECUTE` | false | Auto-execute opportunities |
 
-# Seuil de profit minimum (lamports)
-MIN_PROFIT_THRESHOLD=5000  # 0.000005 SOL
+## API Endpoints
 
-# Slippage maximum (%)
-MAX_SLIPPAGE_PERCENT=3
+- `GET /api/stats` - Bot statistics
+- `GET /api/opportunities` - Recent opportunities
+- `GET /api/health` - Health check
 
-# Mode simulation
-DRY_RUN=true
-
-# Protocoles activés
-ENABLED_PROTOCOLS=Kamino,Marginfi,JupiterLend
-
-# Actifs prioritaires
-PRIORITY_ASSETS=SOL,USDC,USDT,jitoSOL,bonk
-```
-
-## 🎯 Utilisation
-
-### Démarrer le bot
-```bash
-# Mode normal (mainnet)
-cargo run --release -- start
-
-# Mode simulation (recommandé pour tester)
-cargo run --release -- start --dry-run
-
-# Personnalisé
-cargo run --release -- start \
-  --dry-run \
-  --interval 30 \
-  --min-profit 10000 \
-  --protocols Kamino,Marginfi
-```
-
-### Scan unique
-```bash
-# Scan sans exécuter
-cargo run --release -- scan --verbose
-```
-
-### Test de configuration
-```bash
-# Vérifier la configuration et la connexion
-cargo run --release -- test
-```
-
-### Afficher la configuration
-```bash
-cargo run --release -- config
-```
-
-## 📊 Stratégie de Liquidation
-
-### 1. Détection des positions
-- Scan périodique des comptes de chaque protocole
-- Calcul du health factor: `collateral_value / debt_value`
-- Filtrage: `health_factor < 1.0`
-
-### 2. Calcul de rentabilité
-```
-profit = (collateral_received * (1 + bonus)) * (1 - slippage) 
-        - debt_value - gas_fees - flash_loan_fees
-```
-
-### 3. Exécution atomique
-1. Flash loan emprunt du montant requis
-2. Remboursement de la dette de la victime
-3. Réclamation du collateral avec bonus
-4. Swap via Jupiter aggregator
-5. Remboursement du flash loan + frais
-6. Profit = solde restant
-
-## 🔧 Architecture
+## Architecture
 
 ```
 src/
-├── main.rs          # CLI et boucle principale
-├── config.rs        # Gestion configuration
-├── scanner.rs       # Détection positions liquidables
-├── liquidator.rs    # Exécution liquidations
-└── utils.rs         # Prix, calculs, utilitaires
+├── arbitrage-bot.ts      # Main orchestration
+├── scanner.ts            # Multi-DEX price scanner
+├── executor.ts           # Flash loan execution
+├── profit-calculator.ts  # Profit calculations
+├── dynamic-sizer.ts      # Optimal amount sizing
+└── utils/
+    ├── throttled-connection.ts
+    └── logger.ts
 ```
 
-### Flux de données
+## Profit Calculation
+
 ```
-Polling → Scanner → Analyse → Liquidator → Flash Loan → Liquidation → Swap → Profit
+netProfit = (spread × amount) - flashFee - buyFee - sellFee - slippage
 ```
 
-## 🛡️ Sécurité
+DEX Fees:
+- Phoenix: 0.10%
+- Meteora: 0.20%
+- Raydium/Orca: 0.25%
+- Kamino Flash Loan: 0.001%
 
-### Mesures intégrées
-- **Validation des oracles**: Âge maximum des prix (5 minutes)
-- **Simulation systématique**: Toutes les tx sont simulées avant envoi
-- **Checks de liquidité**: Vérification des pools avant gros emprunts
-- **Retry avec backoff**: Gestion des erreurs réseau
-- **Mode dry-run**: Tests sans risque
+## VPS Deployment
 
-### Bonnes pratiques
-- Commencer en mode `dry-run=true`
-- Tester sur testnet d'abord
-- Surveiller les frais de gas
-- Diversifier les protocoles
-
-## 📈 Monitoring
-
-### Logs en temps réel
 ```bash
-# Niveau de détail
-RUST_LOG=debug cargo run --release
+# SSH to VPS
+ssh ubuntu@your-vps-ip
 
-# Logs structurés
-RUST_LOG=info cargo run --release 2>&1 | tee bot.log
-```
+# Clone and setup
+git clone https://github.com/0xthannis/liquidation-bot.git
+cd liquidation-bot/ts-bot
+npm install
 
-### Métriques importantes
-- Nombre de scans effectués
-- Liquidations réussies/échouées
-- Profit total accumulé
-- Health factor moyen des cibles
+# Configure
+cp .env.example .env
+nano .env  # Add your keys
 
-## 🚨 Alertes
-
-Le bot génère des alertes pour:
-- Liquidations > 0.1 SOL
-- Erreurs RPC/network
-- Solde wallet faible
-- Prix oracles stale
-
-## 🔄 Déploiement 24/7
-
-### Systemd (Linux)
-```bash
-# Créer le service
-sudo nano /etc/systemd/system/liquidation-bot.service
-
-[Unit]
-Description=Solana Liquidation Bot
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/solana-liquidation-bot
-ExecStart=/home/ubuntu/solana-liquidation-bot/target/release/liquidation-bot start
-Restart=always
-RestartSec=10
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=multi-user.target
-
-# Activer
-sudo systemctl enable liquidation-bot
-sudo systemctl start liquidation-bot
-```
-
-### PM2
-```bash
-# Installer PM2
+# Run with PM2
 npm install -g pm2
-
-# Démarrer
-pm2 start target/release/liquidation-bot --name "liquidation-bot" -- start
-
-# Monitor
-pm2 monit
-
-# Logs
-pm2 logs liquidation-bot
+pm2 start npm --name "arb-bot" -- start
+pm2 logs arb-bot
 ```
 
-## 🐛 Dépannage
+## Safety
 
-### Erreurs communes
-1. **"WALLET_PRIVATE_KEY requis"**
-   - Vérifiez votre fichier `.env`
-   - Assurez-vous que la clé est en base58
+1. Always start with `DRY_RUN=true`
+2. Monitor logs before enabling `AUTO_EXECUTE`
+3. Use a dedicated wallet with limited funds
+4. Never commit your `.env` file
 
-2. **"Erreur RPC"**
-   - Vérifiez votre API key Helius
-   - Essayez avec le RPC public mainnet
+## License
 
-3. **"Solde insuffisant"**
-   - Minimum 1 SOL recommandé pour les frais
-   - Le bot utilise des flash loans (pas de capital requis)
-
-4. **"Aucune position trouvée"**
-   - Normal en périodes de faible volatilité
-   - Vérifiez que les protocoles sont activés
-
-### Debug avancé
-```bash
-# Mode debug complet
-RUST_LOG=debug cargo run --release -- start --dry-run
-
-# Vérifier la configuration
-cargo run --release -- test
-
-# Scan verbose
-cargo run --release -- scan --verbose
-```
-
-## ⚠️ Avertissements
-
-**RISQUES IMPORTANTS:**
-- **TESTNET OBLIGATOIRE**: Testez exhaustivement avant mainnet
-- **VOLATILITÉ**: Les conditions de marché peuvent changer rapidement
-- **COMPÉTITION**: D'autres bots peuvent exécuter les liquidations
-- **FRAIS**: Les frais de gas peuvent impacter la rentabilité
-
-**RECOMMANDATIONS:**
-- Commencez avec des seuils de profit élevés
-- Surveillez attentivement les premiers jours
-- Ayez un fonds d'urgence pour les frais
-- Diversifiez les protocoles actifs
-
-## 📝 License
-
-MIT License - Voir le fichier LICENSE pour les détails.
-
-## 🤝 Contributions
-
-Contributions bienvenues! Veuillez:
-1. Fork le projet
-2. Créer une branche feature
-3. Submit un PR avec description claire
-
-## 📞 Support
-
-Pour questions et support:
-- Issues GitHub pour les bugs
-- Discord pour les discussions
-- Documentation détaillée dans le code
-
----
-
-**⚠️ AVERTISSEMENT**: Ce bot est destiné aux utilisateurs expérimentés. Utilisez à vos propres risques. Testez toujours en mode dry-run avant le déploiement en production.
+MIT
