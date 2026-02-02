@@ -293,9 +293,11 @@ export class Executor {
           logger.error('[Executor] Failed to build Raydium buy transaction');
           return [];
         }
-        // Raydium returns full transaction, we need to extract instructions
-        // For flash loans, we need individual instructions
-        logger.info('[Executor] Raydium buy transaction built');
+        // Extract instructions from Raydium transaction
+        const buyTx = VersionedTransaction.deserialize(buyTxBuffer);
+        const buyIxs = this.extractInstructionsFromVersionedTx(buyTx);
+        instructions.push(...buyIxs);
+        logger.info(`[Executor] Raydium buy: ${buyIxs.length} instructions`);
       } else if (opportunity.buyDex === 'orca') {
         const buyTx = await this.orcaClient.buildSwapTransaction(
           usdcMint,
@@ -327,7 +329,11 @@ export class Executor {
           logger.error('[Executor] Failed to build Raydium sell transaction');
           return [];
         }
-        logger.info('[Executor] Raydium sell transaction built');
+        // Extract instructions from Raydium transaction
+        const sellTx = VersionedTransaction.deserialize(sellTxBuffer);
+        const sellIxs = this.extractInstructionsFromVersionedTx(sellTx);
+        instructions.push(...sellIxs);
+        logger.info(`[Executor] Raydium sell: ${sellIxs.length} instructions`);
       } else if (opportunity.sellDex === 'orca') {
         const sellTx = await this.orcaClient.buildSwapTransaction(
           baseMint,
@@ -366,6 +372,36 @@ export class Executor {
       logger.error(`[Executor] Error building swap instructions: ${e}`);
       return [];
     }
+  }
+
+  /**
+   * Extract instructions from a VersionedTransaction
+   * Needed because Raydium API returns full transactions
+   */
+  private extractInstructionsFromVersionedTx(tx: VersionedTransaction): TransactionInstruction[] {
+    const message = tx.message;
+    const instructions: TransactionInstruction[] = [];
+    
+    // Get account keys from the message
+    const accountKeys = message.staticAccountKeys;
+    
+    // Convert each compiled instruction to TransactionInstruction
+    for (const ix of message.compiledInstructions) {
+      const programId = accountKeys[ix.programIdIndex];
+      const keys = ix.accountKeyIndexes.map(idx => ({
+        pubkey: accountKeys[idx],
+        isSigner: tx.message.isAccountSigner(idx),
+        isWritable: tx.message.isAccountWritable(idx),
+      }));
+      
+      instructions.push(new TransactionInstruction({
+        programId,
+        keys,
+        data: Buffer.from(ix.data),
+      }));
+    }
+    
+    return instructions;
   }
 
   /**
